@@ -1,0 +1,915 @@
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useMemo, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    FlatList,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Animated, {
+    Easing,
+    useAnimatedStyle,
+    withTiming
+} from 'react-native-reanimated';
+import { useMenuStore } from '../lib/menu_store';
+import { useUiStore, setActiveAddress, addOrder, clearCart, Order } from '../lib/ui_store';
+import { submitOrder, type OrderPayload } from '../lib/order_api';
+import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
+import * as Haptics from 'expo-haptics';
+
+const { width, height } = Dimensions.get('window');
+const DELIVERY_FEE = 38.00;
+
+// TypeScript Interfaces
+interface CheckoutItem {
+    id: string;
+    title: string;
+    image: any;
+    price: string | number;
+    quantity: number;
+}
+
+export default function CheckoutScreen() {
+    const router = useRouter();
+    const params = useLocalSearchParams();
+    const { menuItems: storeItems } = useMenuStore();
+
+    // 1. Parse Cart Items from Params and Resolve from Store
+    const initialCart: CheckoutItem[] = useMemo(() => {
+        try {
+            if (params.cart) {
+                const sparseCart = JSON.parse(params.cart as string);
+                // Resolve full details from store
+                return sparseCart.map((item: { id: string, quantity: number }) => {
+                    const storeItem = storeItems.find(s => s.id === item.id);
+                    if (storeItem) {
+                        return { ...storeItem, quantity: item.quantity };
+                    }
+                    return null;
+                }).filter(Boolean);
+            }
+        } catch (e) {
+            console.error('Failed to parse cart:', e);
+        }
+        return [];
+    }, [params.cart, storeItems]);
+
+    const [menuItems, setMenuItems] = useState<CheckoutItem[]>(initialCart);
+
+    // Keep state in sync if initialCart changes (e.g. store updates)
+    React.useEffect(() => {
+        setMenuItems(initialCart);
+    }, [initialCart]);
+
+    const { addresses, activeAddressId } = useUiStore();
+    const activeAddress = addresses.find(a => a.id === activeAddressId) || (addresses.length > 0 ? addresses[0] : null);
+
+    // 2. State for Address Modal, Payment, and Summary Collapse
+    const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
+    const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false);
+    const [userProfile, setUserProfile] = useState<{ firstName: string; lastName: string; email: string; contactNumber: string } | null>(null);
+
+    // Load user profile on mount
+    React.useEffect(() => {
+        const loadProfile = async () => {
+            const profile = await AsyncStorage.getItem('user_profile');
+            if (profile) setUserProfile(JSON.parse(profile));
+        };
+        loadProfile();
+    }, []);
+
+    // 3. Logic Functions
+    const paymentCategories = ['Cash on Delivery', 'E-Wallet'];
+    const eWallets = [
+        { id: 'gcash', name: 'GCash', desc: 'Secure payment via GCash.', icon: 'https://upload.wikimedia.org/wikipedia/commons/5/52/GCash_logo.svg' },
+        { id: 'maya', name: 'Maya', desc: 'Fast payment via Maya.', icon: 'https://upload.wikimedia.org/wikipedia/commons/9/9a/PayMaya_Logo.png' }
+    ];
+
+    const updateQuantity = (id: string, delta: number) => {
+        setMenuItems(current =>
+            current.map(item =>
+                item.id === id
+                    ? { ...item, quantity: Math.max(1, item.quantity + delta) }
+                    : item
+            )
+        );
+    };
+
+    const removeItem = (id: string) => {
+        setMenuItems(current => current.filter(item => item.id !== id));
+    };
+
+    const calculateSubtotal = () => {
+        return menuItems.reduce((total, item) => {
+            const priceValue = typeof item.price === 'string'
+                ? parseFloat(item.price.replace(/[^\d.]/g, ''))
+                : item.price;
+            return total + (priceValue * item.quantity);
+        }, 0);
+    };
+
+    const calculateTotal = () => calculateSubtotal() + DELIVERY_FEE;
+
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleProcessTransaction = async () => {
+        // 1. Validation
+        if (!activeAddress) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert("Missing Information", "Please select a delivery address first.");
+            return;
+        }
+
+        if (!selectedMethod && selectedCategory !== 'Cash on Delivery') {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert("Missing Information", "Please select a payment method.");
+            return;
+        }
+
+        if (menuItems.length === 0) {
+            Alert.alert("Empty Cart", "Your cart is empty.");
+            return;
+        }
+
+        setIsSubmitting(true);
+
+        // 2. Build payload for Laravel
+        const orderPayload: OrderPayload = {
+            customer_name: activeAddress.fullAddress.split(',')[0] || 'Customer',
+            mobile_number: userProfile?.contactNumber || '',
+            address: activeAddress.fullAddress,
+            items: menuItems.map(item => ({
+                product_id: parseInt(item.id, 10) || 0,
+                name: item.title,
+                quantity: item.quantity,
+                price: typeof item.price === 'string'
+                    ? parseFloat(item.price.replace(/[^\d.]/g, ''))
+                    : item.price,
+            })),
+            total_amount: calculateTotal(),
+            payment_method: selectedCategory === 'Cash on Delivery' ? 'cod' : (selectedMethod || 'e-wallet'),
+        };
+
+        try {
+            // 3. Submit to Laravel backend
+            const result = await submitOrder(orderPayload);
+            console.log('[Checkout] Order submitted successfully:', result);
+
+            // 4. Create local Order record
+            const firstItem = menuItems[0];
+            const orderId = `ORD-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+
+            const itemsList = menuItems.map(item => ({
+                title: item.title,
+                quantity: item.quantity,
+                price: `₱${(typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : item.price).toFixed(2)}`
+            }));
+
+            const newOrder: Order = {
+                id: Math.random().toString(36).substring(2, 9),
+                orderId: orderId,
+                backendOrderId: result.order_id,
+                items: menuItems.reduce((acc, item) => acc + item.quantity, 0),
+                subtotal: `₱${calculateSubtotal().toFixed(2)}`,
+                deliveryFee: `₱${DELIVERY_FEE.toFixed(2)}`,
+                totalPrice: `₱${calculateTotal().toFixed(2)}`,
+                title: menuItems.length > 1 ? `${firstItem.title} + ${menuItems.length - 1} more` : firstItem.title,
+                status: 'In Progress',
+                date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                deliveryTime: 'Today, ' + new Date(Date.now() + 45 * 60000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                paymentMethod: selectedCategory === 'Cash on Delivery' ? 'Cash on Delivery' : (selectedMethod || 'E-Wallet'),
+                fullAddress: activeAddress.fullAddress,
+                itemsList: itemsList,
+                image: firstItem.image
+            };
+
+            // 5. Save order locally, clear cart, then navigate to tracking
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            addOrder(newOrder);
+            clearCart();
+
+            router.replace({
+                pathname: '/track-order',
+                params: {
+                    backendOrderId: String(result.order_id),
+                    orderId: orderId,
+                    totalPrice: `₱${calculateTotal().toFixed(2)}`,
+                },
+            } as any);
+
+        } catch (error: any) {
+            console.error('[Checkout] Order submission failed:', error);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert(
+                "Order Failed",
+                error?.response?.data?.message || "Could not place your order. Please check your connection and try again.",
+                [{ text: "OK" }]
+            );
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // 4. Animation Styles
+    const summaryAnimatedStyle = useAnimatedStyle(() => {
+        return {
+            transform: [{
+                translateY: withTiming(isSummaryCollapsed ? 240 : 0, {
+                    duration: 400,
+                    easing: Easing.out(Easing.back(0.8))
+                })
+            }],
+            opacity: withTiming(isSummaryCollapsed ? 0 : 1, { duration: 300 })
+        };
+    });
+
+    // 5. Rendering logic
+    const renderMenuItem = ({ item }: { item: CheckoutItem }) => (
+        <View style={styles.itemCard}>
+            <Image source={item.image} style={styles.itemImage} />
+            <View style={styles.itemInfo}>
+                <View style={styles.itemHeader}>
+                    <Text style={styles.itemName} numberOfLines={1}>{item.title}</Text>
+                    <TouchableOpacity onPress={() => removeItem(item.id)} style={styles.trashBtn}>
+                        <Feather name="trash-2" size={16} color="#EF4444" />
+                    </TouchableOpacity>
+                </View>
+
+                <Text style={styles.itemPriceSingle}>
+                    {typeof item.price === 'number' ? `₱${item.price.toFixed(2)}` : item.price} / unit
+                </Text>
+
+                <View style={styles.cardFooter}>
+                    <View style={styles.stepper}>
+                        <TouchableOpacity
+                            onPress={() => updateQuantity(item.id, -1)}
+                            style={[styles.stepBtn, item.quantity === 1 && styles.stepBtnDisabled]}
+                        >
+                            <Feather name="minus" size={14} color={item.quantity === 1 ? "#D1D5DB" : "#1F2937"} />
+                        </TouchableOpacity>
+                        <Text style={styles.stepValue}>{item.quantity}</Text>
+                        <TouchableOpacity
+                            onPress={() => updateQuantity(item.id, 1)}
+                            style={styles.stepBtn}
+                        >
+                            <Feather name="plus" size={14} color="#1F2937" />
+                        </TouchableOpacity>
+                    </View>
+                    <Text style={styles.itemTotalPrice}>₱{((typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : item.price) * item.quantity).toFixed(2)}</Text>
+                </View>
+            </View>
+        </View>
+    );
+
+    return (
+        <SafeAreaView style={styles.safeArea}>
+            <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+
+            {/* Header (Scaled down slightly) */}
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+                    <Feather name="chevron-left" size={22} color="#4B5563" />
+                </TouchableOpacity>
+                <View style={styles.headerTitleWrap}>
+                    <Text style={styles.headerTitle}>Checkout Order</Text>
+                </View>
+                <View style={styles.headerBtnPlaceholder} />
+            </View>
+
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingBottom: isSummaryCollapsed ? 100 : 300 }
+                ]}
+            >
+                {/* Items Section */}
+                <Text style={styles.sectionTitle}>Items ({menuItems.length})</Text>
+                {menuItems.length > 0 ? (
+                    <View style={[
+                        styles.itemsContainer,
+                        menuItems.length > 5 && { height: height * 0.45 }
+                    ]}>
+                        <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+                            {menuItems.map((item) => (
+                                <View key={item.id}>
+                                    {renderMenuItem({ item })}
+                                </View>
+                            ))}
+                        </ScrollView>
+                    </View>
+                ) : (
+                    <View style={styles.emptyContainer}>
+                        <MaterialCommunityIcons name="cart-variant" size={48} color="#E5E7EB" />
+                        <Text style={styles.emptyText}>Your order is empty</Text>
+                        <TouchableOpacity onPress={() => router.back()} style={styles.browseBtn}>
+                            <Text style={styles.browseBtnText}>Go back to Menu</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {/* Address Section */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionTitle}>Delivery Address</Text>
+                    <TouchableOpacity onPress={() => router.push('/addresses' as any)}>
+                        <Text style={styles.sectionActionText}>Manage</Text>
+                    </TouchableOpacity>
+                </View>
+                
+                <TouchableOpacity 
+                    activeOpacity={0.7} 
+                    onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setShowDeliveryModal(true);
+                    }}
+                    style={styles.addressContainer}
+                >
+                    <View style={styles.addressBox}>
+                        <View style={styles.addressLeft}>
+                            <View style={styles.addressIconCircle}>
+                                <Ionicons name="location" size={18} color="#FF5800" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                {activeAddress ? (
+                                    <>
+                                        <Text style={styles.addressMainText} numberOfLines={1}>
+                                            {activeAddress.street || activeAddress.subdivision || activeAddress.fullAddress.split(',')[0]}
+                                        </Text>
+                                        <Text style={styles.addressSubText} numberOfLines={1}>{activeAddress.fullAddress}</Text>
+                                    </>
+                                ) : (
+                                    <Text style={styles.addressMainText}>Choose delivery address</Text>
+                                )}
+                            </View>
+                        </View>
+                        <View style={styles.editBtn}>
+                            <Feather name="chevron-right" size={20} color="#9CA3AF" />
+                        </View>
+                    </View>
+                </TouchableOpacity>
+
+                {/* Payment Method Section */}
+                <Text style={styles.sectionTitle}>Payment Method</Text>
+                <View style={styles.paymentContainer}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+                        {paymentCategories.map(cat => (
+                            <TouchableOpacity
+                                key={cat}
+                                onPress={() => setSelectedCategory(cat)}
+                                style={[styles.categoryTab, selectedCategory === cat && styles.categoryTabActive]}
+                            >
+                                <Text style={[styles.categoryTabText, selectedCategory === cat && styles.categoryTabTextActive]}>{cat}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+
+                    {selectedCategory === 'E-Wallet' && (
+                        <View style={styles.methodList}>
+                            {eWallets.map(m => (
+                                <TouchableOpacity
+                                    key={m.id}
+                                    onPress={() => setSelectedMethod(m.name)}
+                                    style={styles.methodRow}
+                                >
+                                    <View style={[styles.radio, selectedMethod === m.name && styles.radioActive]}>
+                                        {selectedMethod === m.name && <View style={styles.radioInner} />}
+                                    </View>
+                                    <View style={styles.methodIconBox}>
+                                        <Image source={{ uri: m.icon }} style={styles.methodIcon} resizeMode="contain" />
+                                    </View>
+                                    <View style={styles.methodInfo}>
+                                        <Text style={styles.methodName}>{m.name}</Text>
+                                        <Text style={styles.methodDesc} numberOfLines={1}>{m.desc}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+
+                    {selectedCategory === 'Cash on Delivery' && (
+                        <View style={styles.methodList}>
+                            <TouchableOpacity
+                                onPress={() => {}} // Category selection is enough
+                                style={styles.methodRow}
+                                disabled={true}
+                            >
+                                <View style={[styles.radio, styles.radioActive]}>
+                                    <View style={styles.radioInner} />
+                                </View>
+                                <View style={styles.methodIconBox}>
+                                    <MaterialCommunityIcons name="hand-coin" size={20} color="#FF5800" />
+                                </View>
+                                <View style={styles.methodInfo}>
+                                    <Text style={styles.methodName}>Pay on Delivery</Text>
+                                    <Text style={styles.methodDesc} numberOfLines={1}>Pay when your order arrives.</Text>
+                                </View>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </View>
+            </ScrollView>
+
+            {/* Collapsible Order Summary & Bottom Footer */}
+            <Animated.View style={[styles.summaryContainer, summaryAnimatedStyle]}>
+                <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setIsSummaryCollapsed(true)}
+                    style={styles.handleWrapper}
+                >
+                    <View style={styles.handle} />
+                </TouchableOpacity>
+
+                <View style={styles.summaryContent}>
+
+
+                    <Text style={styles.summaryTitle}>Order Summary</Text>
+                    <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Subtotal</Text>
+                        <Text style={styles.summaryValue}>₱{calculateSubtotal().toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Delivery fee</Text>
+                        <Text style={styles.summaryValue}>₱{DELIVERY_FEE.toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.divider} />
+                    <View style={[styles.summaryRow, { marginTop: 10, marginBottom: 15 }]}>
+                        <Text style={styles.totalLabel}>Total ({menuItems.length} {menuItems.length === 1 ? 'item' : 'items'}):</Text>
+                        <Text style={styles.totalValue}>₱{calculateTotal().toFixed(2)}</Text>
+                    </View>
+
+                    <TouchableOpacity 
+                        style={[styles.processBtn, isSubmitting && styles.processBtnDisabled]}
+                        onPress={handleProcessTransaction}
+                        disabled={isSubmitting}
+                        activeOpacity={0.8}
+                    >
+                        {isSubmitting ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                <Text style={styles.processBtnText}>Placing Order...</Text>
+                            </View>
+                        ) : (
+                            <Text style={styles.processBtnText} numberOfLines={1} adjustsFontSizeToFit>Process Transaction</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            </Animated.View>
+
+            {isSummaryCollapsed && (
+                <TouchableOpacity
+                    style={styles.maximizeBtn}
+                    onPress={() => setIsSummaryCollapsed(false)}
+                    activeOpacity={0.8}
+                >
+                    <Ionicons name="chevron-up" size={22} color="#FFF" />
+                </TouchableOpacity>
+            )}
+
+            <DeliveryDetailsModal
+                visible={showDeliveryModal}
+                onClose={() => setShowDeliveryModal(false)}
+                onAddAddress={() => {
+                    setShowDeliveryModal(false);
+                    router.push('/addresses' as any);
+                }}
+            />
+        </SafeAreaView>
+    );
+}
+
+const styles = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 12,
+        paddingBottom: 15,
+        backgroundColor: '#FFFFFF',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4FB',
+    },
+    headerBtn: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#F3F4FB',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
+        elevation: 2,
+    },
+    headerBtnPlaceholder: {
+        width: 38,
+    },
+    headerTitleWrap: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    headerTitle: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: '#1F2937',
+    },
+    scrollContent: {
+        paddingHorizontal: 16,
+    },
+    sectionTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#1F2937',
+        marginTop: 18,
+        marginBottom: 12,
+    },
+    itemsContainer: {
+        marginBottom: 6,
+        backgroundColor: '#FFFFFF',
+    },
+    itemCard: {
+        flexDirection: 'row',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 15,
+        padding: 10,
+        marginBottom: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
+    },
+    itemImage: {
+        width: 65,
+        height: 65,
+        borderRadius: 12,
+        backgroundColor: '#F9FAFB',
+    },
+    itemInfo: {
+        flex: 1,
+        marginLeft: 12,
+        justifyContent: 'space-between',
+    },
+    itemHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+    },
+    itemName: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#111827',
+        flex: 1,
+        marginRight: 6,
+    },
+    trashBtn: {
+        padding: 2,
+    },
+    itemPriceSingle: {
+        fontSize: 11,
+        color: '#6B7280',
+        marginTop: 1,
+    },
+    cardFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
+    },
+    stepper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F3F4F6',
+        borderRadius: 10,
+        padding: 3,
+    },
+    stepBtn: {
+        width: 24,
+        height: 24,
+        borderRadius: 7,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    stepBtnDisabled: {
+        backgroundColor: '#F9FAFB',
+    },
+    stepValue: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1F2937',
+        marginHorizontal: 8,
+    },
+    itemTotalPrice: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#FF5800',
+    },
+    addressContainer: {
+        backgroundColor: '#F9FAFB',
+        borderRadius: 15,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    addressBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingBottom: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E5E7EB',
+    },
+    addressLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        marginRight: 10,
+    },
+    addressIconCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#FFF0E6',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    addressText: {
+        flex: 1,
+        fontSize: 12,
+        color: '#4B5563',
+        lineHeight: 18,
+    },
+    editBtn: {
+        padding: 6,
+    },
+    sectionHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 18,
+        marginBottom: 12,
+    },
+    sectionActionText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#FF5800',
+    },
+    addressMainText: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#1F2937',
+        marginBottom: 2,
+    },
+    addressSubText: {
+        fontSize: 12,
+        color: '#6B7280',
+    },
+    addAddressBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 10,
+    },
+    addAddressBtnText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#FF5800',
+    },
+    paymentContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 15,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
+    },
+    categoryScroll: {
+        marginBottom: 12,
+    },
+    categoryTab: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 10,
+        backgroundColor: '#F9FAFB',
+        marginRight: 6,
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
+    },
+    categoryTabActive: {
+        backgroundColor: '#FFF0E6',
+        borderColor: '#FF5800',
+    },
+    categoryTabText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#6B7280',
+    },
+    categoryTabTextActive: {
+        color: '#FF5800',
+    },
+    methodList: {
+        marginTop: 2,
+    },
+    methodRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F9FAFB',
+    },
+    radio: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        borderWidth: 2,
+        borderColor: '#D1D5DB',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    radioActive: {
+        borderColor: '#FF5800',
+    },
+    radioInner: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#FF5800',
+    },
+    methodIconBox: {
+        width: 28,
+        height: 28,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 5,
+        marginRight: 10,
+    },
+    methodIcon: {
+        width: '100%',
+        height: '100%',
+    },
+    methodInfo: {
+        flex: 1,
+    },
+    methodName: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#1F2937',
+    },
+    methodDesc: {
+        fontSize: 11,
+        color: '#9CA3AF',
+        marginTop: 1,
+    },
+    summaryContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: height * 0.4,
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        shadowColor: '#000',
+        shadowOpacity: 0.1,
+        shadowOffset: { width: 0, height: -8 },
+        shadowRadius: 15,
+        elevation: 15,
+        zIndex: 100,
+    },
+    handleWrapper: {
+        width: '100%',
+        paddingTop: 14,
+        paddingBottom: 22,
+        alignItems: 'center',
+    },
+    handle: {
+        width: 44,
+        height: 5,
+        backgroundColor: '#E5E7EB',
+        borderRadius: 2.5,
+    },
+    summaryContent: {
+        paddingHorizontal: 22,
+        paddingTop: 5,
+        paddingBottom: Platform.OS === 'ios' ? 45 : 40,
+    },
+    summaryTitle: {
+        fontSize: 17,
+        fontWeight: '900',
+        color: '#111827',
+        letterSpacing: -0.3,
+        marginBottom: 18,
+    },
+    summaryRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    summaryLabel: {
+        fontSize: 13,
+        color: '#6B7280',
+    },
+    summaryValue: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#1F2937',
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#F3F4F6',
+        marginTop: 8,
+    },
+    totalLabel: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#1F2937',
+    },
+    totalValue: {
+        fontSize: 18,
+        fontWeight: '900',
+        color: '#D94F3D',
+    },
+    processBtn: {
+        backgroundColor: '#FF5800',
+        height: 48,
+        borderRadius: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#FF5800',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    processBtnDisabled: {
+        backgroundColor: '#FFD7C2',
+        shadowOpacity: 0,
+        elevation: 0,
+    },
+    processBtnText: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#FFFFFF',
+    },
+    maximizeBtn: {
+        position: 'absolute',
+        bottom: 80,
+        right: 16,
+        width: 48,
+        height: 48,
+        backgroundColor: '#FF5800',
+        borderRadius: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#FF5800',
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+        elevation: 10,
+        zIndex: 1000,
+    },
+    emptyContainer: {
+        alignItems: 'center',
+        paddingVertical: 30,
+    },
+    emptyText: {
+        fontSize: 14,
+        color: '#9CA3AF',
+        marginTop: 12,
+        marginBottom: 18,
+    },
+    browseBtn: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 15,
+        backgroundColor: '#FFF0E6',
+    },
+    browseBtnText: {
+        color: '#FF5800',
+        fontSize: 13,
+        fontWeight: '700',
+    }
+});

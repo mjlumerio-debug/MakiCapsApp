@@ -1,53 +1,57 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+const tintColorLight = '#D82E3F'; // Traditional Japanese Red (Aka)
+const tintColorDark = '#FF4D4D';
 
 export const Colors = {
   light: {
-    text: '#11181C',
-    background: '#fff',
+    text: '#000000',
+    background: '#FFFFFF',
     tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
+    icon: '#1A1A1A',
+    tabIconDefault: '#1A1A1A',
     tabIconSelected: tintColorLight,
+    primary: tintColorLight,
+    secondary: '#000000',
+    gray: '#F8F8F8',
+    border: '#E8E8E8',
+    white: '#FFFFFF',
   },
   dark: {
-    text: '#ECEDEE',
-    background: '#151718',
+    text: '#FFFFFF',
+    background: '#000000',
     tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
+    icon: '#FFFFFF',
+    tabIconDefault: '#FFFFFF',
     tabIconSelected: tintColorDark,
+    primary: tintColorDark,
+    secondary: '#FFFFFF',
+    gray: '#1A1A1A',
+    border: '#333333',
+    white: '#FFFFFF',
   },
+};
+
+export const Typography = {
+  h1: 'ShipporiMincho-ExtraBold',
+  h2: 'ShipporiMincho-Bold',
+  body: 'Outfit-Regular',
+  button: 'Outfit-Bold',
+  brand: 'YujiBoku-Regular',
+  logo: 'ShipporiMincho-ExtraBold',
 };
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
+    sans: 'Outfit-Regular',
+    serif: 'ShipporiMincho-Regular',
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
-    sans: 'normal',
-    serif: 'serif',
+    sans: 'Outfit-Regular',
+    serif: 'ShipporiMincho-Regular',
     rounded: 'normal',
     mono: 'monospace',
-  },
-  web: {
-    sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
   },
 });
