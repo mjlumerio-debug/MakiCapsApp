@@ -1,10 +1,10 @@
 import api from './api';
 
 export const apiRoutes = {
-  orders: '/orders',
-  products: '/products',
-  validateCart: '/cart/validate',
-  login: '/login',
+  orders: 'orders',
+  products: 'products',
+  validateCart: 'cart/validate',
+  login: 'login',
 } as const;
 
 const getErrorMessage = (error: any, fallback: string): string => {

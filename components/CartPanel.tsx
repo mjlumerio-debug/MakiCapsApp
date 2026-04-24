@@ -1,7 +1,10 @@
-import { useMenuStore } from '@/lib/menu_store';
-import { clearCart, setCartCollapsed, toggleAllCartCheck, toggleCartCheck, updateCartQuantity, useUiStore } from '@/lib/ui_store';
+import { isAddressInServiceArea, setCartCollapsed, useUiStore } from '@/lib/ui_store';
+import { useLocation } from '@/state/contexts/LocationContext';
+import { useBranch } from '@/state/contexts/BranchContext';
+import { useCart } from '@/state/contexts/CartContext';
 import { getDistanceKm } from '@/lib/google_location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { formatPeso, resolveProductImage } from '@/lib/menu_store';
 import React, { useMemo, useState } from 'react';
 import { Alert, FlatList, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useDerivedValue, withTiming } from 'react-native-reanimated';
@@ -11,55 +14,70 @@ type CartPanelProps = {
     onCheckout: () => void;
 };
 
-function CartItemRow({ item, food }: { item: any; food: any }) {
+function CartItemRow({ item, food, dispatch }: { item: any; food: any; dispatch: any }) {
     const displayFood = food || item;
-    if (!displayFood?.title) return null;
+    const name = displayFood.name || displayFood.title;
+    if (!name) return null;
+    
     const maxQuantity = Number(displayFood.max_quantity ?? displayFood.stock ?? 0);
+    const displayPrice = displayFood.selling_price ? formatPeso(displayFood.selling_price) : displayFood.price;
+    const displayImage = displayFood.image_path ? resolveProductImage(displayFood.image_path) : displayFood.image;
 
     return (
         <View style={styles.itemCard}>
             <TouchableOpacity
                 style={styles.checkboxContainer}
-                onPress={() => toggleCartCheck(item.id)}
+                onPress={() => dispatch({ type: 'TOGGLE_CHECK', payload: item.id })}
             >
                 <MaterialCommunityIcons
                     name={item.checked ? "checkbox-marked" : "checkbox-blank-outline"}
                     size={24}
-                    color={item.checked ? "#FF5800" : "#CCC"}
+                    color={item.checked ? "#C87D87" : "#7A5560"}
                 />
             </TouchableOpacity>
 
-            <Image source={displayFood.image} style={styles.itemImage} resizeMode="cover" />
+            <Image 
+                source={typeof displayImage === 'string' ? { uri: displayImage } : displayImage} 
+                style={styles.itemImage} 
+                resizeMode="cover" 
+            />
 
             <View style={styles.itemInfo}>
                 <View>
-                    <Text style={styles.itemTitle} numberOfLines={1}>{displayFood.title}</Text>
+                    <Text style={styles.itemTitle} numberOfLines={1}>{name}</Text>
                     <Text style={styles.itemDescription} numberOfLines={1}>
                         {displayFood.description || 'Fresh ingredients'}
                     </Text>
                 </View>
 
                 <View style={styles.itemFooter}>
-                    <Text style={styles.itemPrice}>{displayFood.price}</Text>
+                    <Text style={styles.itemPrice}>{displayPrice}</Text>
 
                     <View style={styles.qtyRow}>
                         <TouchableOpacity
                             style={styles.qtyBtnMinus}
-                            onPress={() => updateCartQuantity(item.id, item.quantity - 1)}
+                            onPress={() => {
+                                if (item.quantity > 1) {
+                                    dispatch({ type: 'UPDATE_QUANTITY', payload: { id: item.id, quantity: item.quantity - 1 } });
+                                } else {
+                                    dispatch({ type: 'REMOVE_ITEM', payload: item.id });
+                                }
+                            }}
                         >
-                            <Ionicons name="remove" size={14} color="#999" />
+                            <Ionicons name="remove" size={14} color="#C87D87" />
                         </TouchableOpacity>
                         <Text style={styles.qtyText}>{item.quantity.toString().padStart(2, '0')}</Text>
                         <TouchableOpacity
                             style={styles.qtyBtnPlus}
                             onPress={() => {
-                                const result = updateCartQuantity(item.id, item.quantity + 1, maxQuantity);
-                                if (!result.ok) {
-                                    Alert.alert('Maximum available quantity reached', result.message || 'Maximum available quantity reached');
+                                if (item.quantity < maxQuantity) {
+                                    dispatch({ type: 'UPDATE_QUANTITY', payload: { id: item.id, quantity: item.quantity + 1 } });
+                                } else {
+                                    Alert.alert('Maximum reached', 'Maximum available quantity reached');
                                 }
                             }}
                         >
-                            <Ionicons name="add" size={14} color="#FFF" />
+                            <Ionicons name="add" size={14} color="#FBEAD6" />
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -69,17 +87,20 @@ function CartItemRow({ item, food }: { item: any; food: any }) {
 }
 
 export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps) {
-    const { cartItems, isCartCollapsed, addresses, activeAddressId, selectedBranch } = useUiStore();
-    const { menuItems } = useMenuStore();
+    const { isCartCollapsed } = useUiStore();
+    const { state: locationState } = useLocation();
+    const { state: branchState } = useBranch();
+    const { state: cartState, dispatch } = useCart();
+    
+    const { selectedAddress: activeAddress } = locationState;
+    const { selectedBranch, catalogMode } = branchState;
+    const { items: cartItems } = cartState;
+    const isGlobalMode = catalogMode === 'global';
+
     const [showClearCartModal, setShowClearCartModal] = useState(false);
 
     const checkedItems = useMemo(() => cartItems.filter(item => item.checked), [cartItems]);
     const allChecked = cartItems.length > 0 && checkedItems.length === cartItems.length;
-
-    const activeAddress = useMemo(
-        () => addresses.find((a) => a.id === activeAddressId),
-        [addresses, activeAddressId]
-    );
 
     const distanceToBranch = useMemo(() => {
         if (!selectedBranch || !activeAddress?.latitude || !activeAddress?.longitude || !selectedBranch.latitude || !selectedBranch.longitude) return null;
@@ -96,16 +117,17 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
         return distanceToBranch > selectedBranch.delivery_radius_km;
     }, [distanceToBranch, selectedBranch]);
 
-    const subTotal = useMemo(() => {
+    const isServiceable = useMemo(() => 
+        isAddressInServiceArea(activeAddress),
+        [activeAddress]
+    );
+
+    const total = useMemo(() => {
         return checkedItems.reduce((acc, item) => {
-            const food = menuItems.find(f => f.id === item.id) || item;
-            if (!food?.price) return acc;
-            const price = parseFloat(String(food.price).replace(/[^\d.]/g, ''));
+            const price = parseFloat(String(item.price).replace(/[^\d.]/g, '')) || 0;
             return acc + (price * item.quantity);
         }, 0);
-    }, [checkedItems, menuItems]);
-
-    const total = subTotal;
+    }, [checkedItems]);
 
     const animatedStyle = useAnimatedStyle(() => {
         const isMin = isCartCollapsed;
@@ -143,20 +165,20 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                     {cartItems.length > 0 && (
                         <TouchableOpacity 
                             style={styles.selectAllRow} 
-                            onPress={() => toggleAllCartCheck(!allChecked)}
+                            onPress={() => dispatch({ type: 'TOGGLE_ALL', payload: !allChecked })}
                             activeOpacity={0.7}
                         >
                             <MaterialCommunityIcons
                                 name={allChecked ? "checkbox-marked" : "checkbox-blank-outline"}
                                 size={20}
-                                color={allChecked ? "#D94F3D" : "#999"}
+                                color={allChecked ? "#C87D87" : "#7A5560"}
                             />
                             <Text style={styles.selectAllText}>Select All</Text>
                         </TouchableOpacity>
                     )}
                 </View>
                 <TouchableOpacity style={styles.clearBtn} onPress={handleClearCart}>
-                    <Ionicons name="trash-outline" size={22} color="#D94F3D" />
+                    <Ionicons name="trash-outline" size={22} color="#C87D87" />
                 </TouchableOpacity>
             </View>
 
@@ -167,7 +189,8 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                     renderItem={({ item }) => (
                         <CartItemRow
                             item={item}
-                            food={menuItems.find(f => f.id === item.id)}
+                            food={null}
+                            dispatch={dispatch}
                         />
                     )}
                     contentContainerStyle={styles.listContent}
@@ -194,26 +217,30 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                         </TouchableOpacity>
 
                         <View style={styles.summaryContent}>
-                            <View style={styles.horizontalFooterBar}>
-                                <View>
-                                    <Text style={styles.totalCountText}>Total ({checkedItems.length} {checkedItems.length === 1 ? 'item' : 'items'})</Text>
-                                    <Text style={styles.totalPriceText}>₱{total.toFixed(2).split('.')[0]}<Text style={styles.decimalText}>.{total.toFixed(2).split('.')[1]}</Text></Text>
-                                </View>
-
-                                <View style={{ alignItems: 'flex-end' }}>
-                                    {(isOutsideRadius || !activeAddress) && (
-                                        <Text style={styles.outsideWarning}>
-                                            {!activeAddress ? 'Set address to order' : 'Out of delivery range'}
+                            <View style={styles.checkoutSection}>
+                                {isGlobalMode && (
+                                    <View style={styles.globalModeWarning}>
+                                        <Ionicons name="information-circle" size={16} color="#4A90E2" />
+                                        <Text style={styles.globalModeWarningText}>
+                                            Select a delivery address within service area to proceed
                                         </Text>
-                                    )}
-                                    <TouchableOpacity
-                                        style={[styles.checkoutBtnSmall, (checkedItems.length === 0 || isOutsideRadius || !activeAddress) && styles.disabledBtn]}
-                                        onPress={onCheckout}
-                                        disabled={checkedItems.length === 0 || isOutsideRadius || !activeAddress}
-                                    >
-                                        <Text style={styles.checkoutBtnText}>Check Out</Text>
-                                    </TouchableOpacity>
-                                </View>
+                                    </View>
+                                )}
+                                
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    style={[
+                                        styles.checkoutButton, 
+                                        (checkedItems.length === 0 || isGlobalMode) && styles.checkoutButtonDisabled
+                                    ]}
+                                    onPress={() => !isGlobalMode && onCheckout()}
+                                    disabled={checkedItems.length === 0 || isGlobalMode}
+                                >
+                                    <Text style={styles.checkoutText}>
+                                        {isGlobalMode ? 'Checkout Disabled' : `Checkout (\u20B1${total.toFixed(2)})`}
+                                    </Text>
+                                    {!isGlobalMode && <Ionicons name="arrow-forward" size={18} color="#FBEAD6" />}
+                                </TouchableOpacity>
                             </View>
                             <View style={styles.footerDivider} />
                             <View style={styles.footerNote}>
@@ -230,7 +257,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                             activeOpacity={0.8}
                         >
                             <Animated.View style={[{ alignItems: 'center', justifyContent: 'center' }]}>
-                                <Ionicons name="chevron-up" size={24} color="#FFF" />
+                                <Ionicons name="chevron-up" size={24} color="#FBEAD6" />
                             </Animated.View>
                         </TouchableOpacity>
                     )}
@@ -241,7 +268,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalIconBox}>
-                            <Ionicons name="trash-outline" size={32} color="#D94F3D" />
+                            <Ionicons name="trash-outline" size={32} color="#C87D87" />
                         </View>
                         <Text style={styles.modalTitle}>Clear Cart</Text>
                         <Text style={styles.modalMessage}>Are you sure you want to remove all items from your cart? This action cannot be undone.</Text>
@@ -252,7 +279,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                             <TouchableOpacity 
                                 style={styles.modalConfirmBtn} 
                                 onPress={() => {
-                                    clearCart();
+                                    dispatch({ type: 'CLEAR_CART' });
                                     setShowClearCartModal(false);
                                 }}
                             >
@@ -269,7 +296,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FB',
+        backgroundColor: '#FBEAD6', // 60% Champagne
     },
     header: {
         flexDirection: 'row',
@@ -282,7 +309,7 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 26,
         fontWeight: '700',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
     },
     headerLeft: {
         flex: 1,
@@ -295,17 +322,17 @@ const styles = StyleSheet.create({
     },
     selectAllText: {
         fontSize: 13,
-        color: '#999',
+        color: '#7A5560', // Body Mauve
         fontWeight: '500',
     },
     clearBtn: {
         width: 40,
         height: 40,
         borderRadius: 20,
-        backgroundColor: '#FFF',
+        backgroundColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#000',
+        shadowColor: '#C87D87',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
@@ -318,12 +345,12 @@ const styles = StyleSheet.create({
     itemCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFF',
+        backgroundColor: '#F0C4CB', // Blush
         borderRadius: 25,
         padding: 12,
         marginBottom: 16,
-        shadowColor: '#000',
-        shadowOpacity: 0.05,
+        shadowColor: '#C87D87',
+        shadowOpacity: 0.1,
         shadowOffset: { width: 0, height: 4 },
         shadowRadius: 10,
         elevation: 2,
@@ -335,7 +362,7 @@ const styles = StyleSheet.create({
         width: 85,
         height: 85,
         borderRadius: 18,
-        backgroundColor: '#F5F5F5',
+        backgroundColor: '#FBEAD6', // Champagne
     },
     itemInfo: {
         flex: 1,
@@ -346,11 +373,11 @@ const styles = StyleSheet.create({
     itemTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
     },
     itemDescription: {
         fontSize: 12,
-        color: '#9E9E9E',
+        color: '#7A5560', // Body Mauve
         marginTop: 4,
     },
     itemFooter: {
@@ -362,7 +389,7 @@ const styles = StyleSheet.create({
     itemPrice: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#FF5800',
+        color: '#C87D87', // Antique Rose
     },
     qtyRow: {
         flexDirection: 'row',
@@ -372,8 +399,8 @@ const styles = StyleSheet.create({
         width: 28,
         height: 28,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#EEE',
+        borderWidth: 1.5,
+        borderColor: '#C87D87', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -381,7 +408,7 @@ const styles = StyleSheet.create({
         width: 28,
         height: 28,
         borderRadius: 14,
-        backgroundColor: '#000',
+        backgroundColor: '#C87D87', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -389,18 +416,18 @@ const styles = StyleSheet.create({
         marginHorizontal: 8,
         fontSize: 14,
         fontWeight: '600',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Mauve
     },
     summaryContainer: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#F0C4CB', // 30% Blush
         borderTopLeftRadius: 40,
         borderTopRightRadius: 40,
-        shadowColor: '#000',
-        shadowOpacity: 0.1,
+        shadowColor: '#C87D87',
+        shadowOpacity: 0.15,
         shadowOffset: { width: 0, height: -10 },
         shadowRadius: 20,
         elevation: 15,
@@ -414,7 +441,7 @@ const styles = StyleSheet.create({
     handle: {
         width: 44,
         height: 4,
-        backgroundColor: '#E6E6E6',
+        backgroundColor: '#C87D87', // Antique Rose
         borderRadius: 2,
     },
     maximizeBtn: {
@@ -422,11 +449,11 @@ const styles = StyleSheet.create({
         right: 25,
         width: 54,
         height: 54,
-        backgroundColor: '#FF5800',
+        backgroundColor: '#C87D87', // Antique Rose
         borderRadius: 27,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#FF5800',
+        shadowColor: '#C87D87',
         shadowOpacity: 0.4,
         shadowOffset: { width: 0, height: 6 },
         shadowRadius: 12,
@@ -440,9 +467,10 @@ const styles = StyleSheet.create({
     },
     footerDivider: {
         height: 1,
-        backgroundColor: '#E5E7EB',
+        backgroundColor: '#C87D87', // Antique Rose
         marginTop: 14,
         marginHorizontal: -20,
+        opacity: 0.2,
     },
     footerNote: {
         flexDirection: 'row',
@@ -453,50 +481,46 @@ const styles = StyleSheet.create({
     },
     footerNoteText: {
         fontSize: 11,
-        color: '#9CA3AF',
+        color: '#7A5560', // Body Mauve
         fontWeight: '400',
     },
-    horizontalFooterBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+    checkoutSection: {
         paddingVertical: 4,
     },
-    totalCountText: {
-        fontSize: 14,
-        color: '#6B7280',
-        fontWeight: '500',
+    checkoutButton: {
+        backgroundColor: '#C87D87', // Antique Rose
+        height: 52,
+        borderRadius: 26,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
     },
-    totalPriceText: {
-        fontSize: 28,
-        fontWeight: '800',
-        color: '#1F2937',
-        letterSpacing: -0.5,
+    checkoutButtonDisabled: {
+        backgroundColor: '#F0C4CB', // Blush
+        opacity: 0.5,
     },
-    decimalText: {
-        fontSize: 18,
-        fontWeight: '600',
-    },
-    checkoutBtnSmall: {
-        backgroundColor: '#FF5800',
-        paddingHorizontal: 36,
-        paddingVertical: 12,
-        borderRadius: 30,
-        shadowColor: '#FF5800',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.35,
-        shadowRadius: 10,
-        elevation: 5,
-    },
-    checkoutBtnText: {
-        color: '#FFF',
-        fontSize: 17,
+    checkoutText: {
+        color: '#FBEAD6', // Champagne
+        fontSize: 16,
         fontWeight: '700',
     },
-    disabledBtn: {
-        backgroundColor: '#E5E7EB',
-        shadowOpacity: 0,
-        elevation: 0,
+    globalModeWarning: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FBEAD6', // Champagne
+        padding: 10,
+        borderRadius: 8,
+        marginBottom: 12,
+        gap: 8,
+        borderWidth: 1,
+        borderColor: '#C87D87',
+    },
+    globalModeWarningText: {
+        color: '#4A2C35', // Mauve
+        fontSize: 12,
+        fontWeight: '600',
+        flex: 1,
     },
     emptyState: {
         marginTop: 60,
@@ -507,12 +531,12 @@ const styles = StyleSheet.create({
         marginTop: 20,
         fontSize: 20,
         fontWeight: '700',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
     },
     emptyText: {
         marginTop: 10,
         fontSize: 14,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         textAlign: 'center',
         lineHeight: 22,
     },
@@ -524,14 +548,14 @@ const styles = StyleSheet.create({
         padding: 24,
     },
     modalContent: {
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#FBEAD6', // Champagne
         borderRadius: 32,
         padding: 32,
         width: '100%',
         maxWidth: 340,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOpacity: 0.15,
+        shadowColor: '#C87D87',
+        shadowOpacity: 0.2,
         shadowOffset: { width: 0, height: 10 },
         shadowRadius: 20,
         elevation: 10,
@@ -540,7 +564,7 @@ const styles = StyleSheet.create({
         width: 72,
         height: 72,
         borderRadius: 36,
-        backgroundColor: '#FDECEB',
+        backgroundColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 20,
@@ -548,13 +572,13 @@ const styles = StyleSheet.create({
     modalTitle: {
         fontSize: 24,
         fontWeight: '700',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
         marginBottom: 10,
         textAlign: 'center',
     },
     modalMessage: {
         fontSize: 15,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         textAlign: 'center',
         lineHeight: 22,
         marginBottom: 30,
@@ -568,31 +592,31 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 54,
         borderRadius: 27,
-        backgroundColor: '#F5F5F5',
+        backgroundColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
     },
     modalCancelText: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Mauve
     },
     modalConfirmBtn: {
         flex: 1,
         height: 54,
         borderRadius: 27,
-        backgroundColor: '#D94F3D',
+        backgroundColor: '#C87D87', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
     },
     modalConfirmText: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#FFFFFF',
+        color: '#FBEAD6', // Champagne
     },
     outsideWarning: {
         fontSize: 10,
-        color: '#FF5252',
+        color: '#C87D87', // Using Accent for warnings to be on theme
         fontWeight: '700',
         marginBottom: 4,
         textTransform: 'uppercase',

@@ -1,21 +1,22 @@
+import { useAppStateFlow } from '@/hooks/useAppStateFlow';
+import { useLocationDetection } from '@/hooks/useLocationDetection';
 import { fetchUserFavorites, toggleUserFavorite } from '@/lib/auth_api';
-import { useMenuStore, refreshMenuStore, type Food } from '@/lib/menu_store';
+import { getDistanceKm } from '@/lib/google_location';
+import { useMenuStore, refreshMenuStore, formatPeso, resolveProductImage, type Food } from '@/lib/menu_store';
 import {
-  addToCart,
   formatAddressForDisplay,
   setFavorites,
   toggleFavorite,
-  useUiStore,
-  validateCartAgainstMenu
+  useUiStore
 } from '@/lib/ui_store';
-import { useLocationDetection } from '@/hooks/useLocationDetection';
-import { getDistanceKm } from '@/lib/google_location';
+import { useBranch } from '@/state/contexts/BranchContext';
+import { useCart } from '@/state/contexts/CartContext';
+import { useLocation } from '@/state/contexts/LocationContext';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Dimensions,
   Keyboard,
@@ -39,15 +40,15 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Components
+import BottomNav, { type NavTab } from '../components/BottomNav';
 import CartPanel from '../components/CartPanel';
+import CategoryIcon from '../components/CategoryIcon';
 import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
 import FavoritesPanel from '../components/FavoritesPanel';
+import FoodCard from '../components/FoodCard';
 import FoodDetailModal from '../components/FoodDetailModal';
 import ProfilePanel from '../components/ProfilePanel';
 import StoresPanel from '../components/StoresPanel';
-import FoodCard from '../components/FoodCard';
-import BottomNav, { type NavTab } from '../components/BottomNav';
-import CategoryIcon from '../components/CategoryIcon';
 
 type FilterMode = 'default' | 'low_price' | 'high_calorie' | 'favorites';
 type PriceRange = 'all' | 'under_8' | '8_to_10' | 'above_10';
@@ -63,19 +64,26 @@ const getCaloriesValue = (calories: string): number => Number(calories.replace('
 export default function HomeDashboard() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { categories: categoryData, menuItems: products } = useMenuStore();
-  const { 
-    userId, favorites, cartItems, addresses, activeAddressId, selectedBranch, 
-    orderMode, isLocationLoading 
-  } = useUiStore();
+  const { categories: categoryData, menuItems: products, isRefreshing } = useMenuStore();
+  const { state: locationState } = useLocation();
+  const { state: branchState } = useBranch();
+  const { state: cartState, dispatch: cartDispatch } = useCart();
+  const { setAddress } = useAppStateFlow();
+
+  const { userId, favorites, addresses, activeAddressId, orderMode } = useUiStore();
+  const { selectedAddress, isLocationLoading, isServiceable } = locationState;
+  const { selectedBranch, isManualSelection, catalogMode } = branchState;
+  const { items: cartItems } = cartState;
+  const isGlobalMode = catalogMode === 'global';
+
   const { detectLocation, isLoadingGPS } = useLocationDetection();
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const favoritesCount = favorites.length;
-  
+
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<NavTab>((params.tab as NavTab) ?? 'home');
-  const [activeCategory, setActiveCategory] = useState<string>('All');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [notificationCount] = useState<number>(3);
   const [filterMode, setFilterMode] = useState<FilterMode>('default');
@@ -133,14 +141,32 @@ export default function HomeDashboard() {
     ],
   }));
 
-  // Initial Data Loading
+  // 🧠 REAL-TIME ADDRESS SYNC (The Engine Trigger)
   useEffect(() => {
-    const loadData = async () => {
-      await detectLocation({ addresses, activeAddressId });
-      await refreshMenuStore();
+    const syncAddress = async () => {
+      if (activeAddressId) {
+        const addr = addresses.find(a => a.id === activeAddressId);
+        // Only trigger if it's different from the current engine state
+        // to avoid unnecessary re-fetches
+        const hasChanged = addr && (
+          addr.latitude !== selectedAddress?.latitude ||
+          addr.longitude !== selectedAddress?.longitude ||
+          addr.id !== selectedAddress?.id
+        );
+
+        if (hasChanged) {
+          await setAddress(addr!);
+        }
+      }
     };
-    loadData();
-  }, [activeAddressId]);
+    syncAddress();
+  }, [activeAddressId, addresses, setAddress, selectedAddress]);
+
+  const activeAddress = useMemo(() =>
+    addresses.find(a => a.id === activeAddressId),
+    [addresses, activeAddressId]
+  );
+
 
   // Fetch favorites if logged in
   useEffect(() => {
@@ -180,16 +206,22 @@ export default function HomeDashboard() {
   // Validate cart when products/branch changes
   useEffect(() => {
     if (activeAddressId && products.length > 0 && cartItems.length > 0) {
-      const { removedCount } = validateCartAgainstMenu(products);
-      if (removedCount > 0) {
-        Alert.alert(
-          "Menu Updated",
-          "Some items in your cart are no longer available at this location and have been removed.",
-          [{ text: "OK" }]
-        );
-      }
+      cartDispatch({ type: 'VALIDATE_CART', payload: products });
     }
   }, [products, activeAddressId]);
+
+  // 🎯 API-DRIVEN REFRESH Rule
+  const handleRefresh = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const mode = isGlobalMode ? 'global' : 'branch';
+    const bId = selectedBranch?.id;
+    await refreshMenuStore(mode, bId);
+  }, [isGlobalMode, selectedBranch]);
+
+  // Refresh when location/branch changes or on focus
+  useEffect(() => {
+    handleRefresh();
+  }, [activeAddressId, selectedBranch?.id, isGlobalMode]);
 
   const cardWidth = useMemo(() => {
     const horizontalPadding = 40;
@@ -207,6 +239,19 @@ export default function HomeDashboard() {
   }, [userId]);
 
   const handleAddToCart = useCallback((item: Food, quantity: number = 1) => {
+    // Block cart in Global Catalog Mode
+    if (isGlobalMode) {
+      Alert.alert(
+        "Browse Only Mode",
+        "You're viewing the full menu catalog. Select a delivery address within a branch's delivery area to start ordering.",
+        [
+          { text: "OK", style: "cancel" },
+          { text: "Set Address", onPress: () => setShowDeliveryModal(true) }
+        ]
+      );
+      return;
+    }
+
     if (!activeAddress) {
       Alert.alert("Address Required", "Please select a delivery address to check availability and start ordering.", [
         { text: "Cancel", style: "cancel" },
@@ -214,6 +259,12 @@ export default function HomeDashboard() {
       ]);
       return;
     }
+
+    if (!selectedBranch) {
+      Alert.alert("No Branch Selected", "Please select a delivery address within a branch's delivery area.");
+      return;
+    }
+
     const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
     const existingQty = cartItems.find((i) => i.id === item.id)?.quantity ?? 0;
 
@@ -222,21 +273,25 @@ export default function HomeDashboard() {
       return;
     }
 
-    const result = addToCart(item.id, quantity, maxQuantity, {
-      title: item.title,
-      price: item.price,
-      image: item.image,
-      description: item.description
+    cartDispatch({
+      type: 'ADD_ITEM',
+      payload: {
+        branchId: selectedBranch.id,
+        item: {
+          id: item.id,
+          title: item.name,
+          price: formatPeso(item.selling_price),
+          quantity: quantity,
+          image: resolveProductImage(item.image_path),
+          description: item.description,
+          checked: true
+        }
+      }
     });
 
-    if (!result.ok) {
-      Alert.alert('Maximum reached', result.message || 'Maximum available quantity reached');
-      return;
-    }
-    
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     triggerFlyAnimation();
-  }, [cartItems, triggerFlyAnimation]);
+  }, [cartItems, triggerFlyAnimation, isGlobalMode, selectedBranch, activeAddress]);
 
   const handleFoodPress = useCallback((item: Food) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -266,10 +321,6 @@ export default function HomeDashboard() {
     setActiveTab(tab);
   }, [activeTab]);
 
-  const activeAddress = useMemo(
-    () => addresses.find((a) => a.id === activeAddressId),
-    [addresses, activeAddressId]
-  );
 
   const distanceToBranch = useMemo(() => {
     if (!selectedBranch || !activeAddress?.latitude || !activeAddress?.longitude || !selectedBranch.latitude || !selectedBranch.longitude) return null;
@@ -288,25 +339,30 @@ export default function HomeDashboard() {
 
   const filteredFoods = useMemo(() => {
     let list = products;
-    if (activeCategory !== 'All') {
-      list = list.filter(f => f.category === activeCategory);
+
+    if (activeCategory !== 'all') {
+      const activeCatObj = categoryData.find(c => c.id === activeCategory);
+      list = list.filter(f => 
+        String(f.category_id_) === String(activeCategory) || 
+        (activeCatObj && f.category_name.toLowerCase().trim() === activeCatObj.name.toLowerCase().trim())
+      );
     }
     if (search.trim()) {
       const s = search.toLowerCase();
-      list = list.filter(f => f.title.toLowerCase().includes(s) || f.category.toLowerCase().includes(s));
+      list = list.filter(f => f.name.toLowerCase().includes(s) || f.category_name.toLowerCase().includes(s));
     }
     if (priceRange !== 'all') {
       list = list.filter(f => {
-        const v = getPriceValue(f.price);
+        const v = f.selling_price;
         if (priceRange === 'under_8') return v < 450;
         if (priceRange === '8_to_10') return v >= 450 && v <= 550;
         return v > 550;
       });
     }
     if (filterMode === 'low_price') {
-      list = [...list].sort((a, b) => getPriceValue(a.price) - getPriceValue(b.price));
+      list = [...list].sort((a, b) => a.selling_price - b.selling_price);
     } else if (filterMode === 'high_calorie') {
-      list = [...list].sort((a, b) => getCaloriesValue(b.calories) - getCaloriesValue(a.calories));
+      list = [...list]; // Calories removed from DB schema
     } else if (filterMode === 'favorites') {
       list = list.filter(f => favorites.includes(f.id));
     }
@@ -324,23 +380,68 @@ export default function HomeDashboard() {
     <View style={[styles.container, { paddingTop: topInset }]}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8F9FB" />
 
-      {isOutsideRadius && activeAddress && (
-        <View style={styles.outsideRadiusBanner}>
-          <Ionicons name="warning" size={18} color="#FFF" />
-          <Text style={styles.outsideRadiusText}>
-            Outside delivery area ({distanceToBranch?.toFixed(1)}km). Items may not be deliverable.
-          </Text>
-        </View>
-      )}
+      {/* 🛡️ SYSTEM MESSAGING BLOCK (Mutually Exclusive to prevent glitching) */}
+      {(() => {
+        if (isLocationLoading) return null;
 
-      {!activeAddress && !isLocationLoading && (
-        <View style={styles.softMenuBanner}>
-          <Ionicons name="information-circle-outline" size={18} color="#FFF" />
-          <Text style={styles.softMenuText}>
-            Menu and pricing may vary by location. Select address to check availability.
-          </Text>
-        </View>
-      )}
+        // 1. Global Mode (No branch nearby)
+        if (isGlobalMode) {
+          return (
+            <View style={styles.globalModeBanner}>
+              <Ionicons name="globe-outline" size={18} color="#FFF" />
+              <Text style={styles.globalModeBannerText}>
+                No available delivery branch in this location.
+              </Text>
+            </View>
+          );
+        }
+
+        // 2. No Address Selected
+        if (!activeAddress) {
+          return (
+            <View style={styles.softMenuBanner}>
+              <Ionicons name="information-circle-outline" size={18} color="#FFF" />
+              <Text style={styles.softMenuText}>
+                Select a delivery address to continue and check availability.
+              </Text>
+            </View>
+          );
+        }
+
+        // 3. Out-of-Service Area (Laguna Only)
+        if (!isServiceable) {
+          return (
+            <View style={[styles.softMenuBanner, { backgroundColor: '#FF5252' }]}>
+              <Ionicons name="location-outline" size={18} color="#FFF" />
+              <Text style={styles.softMenuText}>
+                We currently deliver within Laguna only.
+              </Text>
+            </View>
+          );
+        }
+
+
+
+        // 5. Active Branch Mode (Smart Message)
+        if (selectedBranch) {
+          return (
+            <View style={styles.smartMessageBanner}>
+              <Ionicons
+                name={isManualSelection ? "information-circle-outline" : "sparkles-outline"}
+                size={16}
+                color="#D94F3D"
+              />
+              <Text style={styles.smartMessageText}>
+                {isManualSelection
+                  ? `You switched from recommended branch`
+                  : `We selected the nearest branch for faster delivery`}
+              </Text>
+            </View>
+          );
+        }
+
+        return null;
+      })()}
 
       {activeTab === 'home' && (
         <View style={styles.header}>
@@ -350,11 +451,7 @@ export default function HomeDashboard() {
             onPress={() => setShowDeliveryModal(true)}
           >
             <View style={styles.locationIconWrap}>
-              {isLocationLoading ? (
-                 <ActivityIndicator size="small" color="#D94F3D" />
-              ) : (
-                 <Feather name="map-pin" size={18} color="#D94F3D" />
-              )}
+              <Feather name="map-pin" size={18} color="#D94F3D" />
             </View>
             <View style={styles.deliveryTextWrap}>
               <Text style={styles.deliveryLabel}>
@@ -403,17 +500,24 @@ export default function HomeDashboard() {
         <View style={styles.titleWrap}>
           <Text style={styles.title}>Authentic Japanese</Text>
           <Text style={styles.title}>Food Delivered Fast</Text>
-          {selectedBranch && (
+          {isGlobalMode ? (
+            <View style={[styles.branchStatusPill, { backgroundColor: 'rgba(107, 114, 128, 0.1)' }]}>
+              <Ionicons name="globe-outline" size={14} color="#6B7280" />
+              <Text style={[styles.servingFromText, { color: '#6B7280', marginLeft: 6 }]}>
+                Full Menu Catalog
+              </Text>
+            </View>
+          ) : selectedBranch ? (
             <View style={styles.branchStatusPill}>
               <View style={[styles.statusDot, { backgroundColor: selectedBranch.status === 'closed' ? '#FF5252' : '#4CAF50' }]} />
               <Text style={styles.servingFromText}>
                 Serving From: <Text style={styles.branchNameBold}>{selectedBranch.name}</Text>
                 {selectedBranch.status_text && (
-                   <Text> • {selectedBranch.status_text}</Text>
+                  <Text> • {selectedBranch.status_text}</Text>
                 )}
               </Text>
             </View>
-          )}
+          ) : null}
         </View>
       )}
 
@@ -446,12 +550,15 @@ export default function HomeDashboard() {
               contentContainerStyle={styles.categoriesContent}
             >
               {categoryData.map((cat) => {
-                const isActive = cat.name === activeCategory;
+                const isActive = cat.id === activeCategory;
                 return (
                   <TouchableOpacity
                     key={cat.id}
                     activeOpacity={0.8}
-                    onPress={() => setActiveCategory(cat.name)}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setActiveCategory(cat.id);
+                    }}
                     style={[styles.categoryCard, isActive && styles.categoryCardActive]}
                   >
                     <View style={[styles.categoryIconWrap, isActive && styles.categoryIconWrapActive]}>
@@ -460,6 +567,14 @@ export default function HomeDashboard() {
                     <Text style={[styles.categoryName, isActive && styles.categoryNameActive]}>
                       {cat.name}
                     </Text>
+                    {isActive && (
+                      <Ionicons
+                        name="flower"
+                        size={12}
+                        color="#D94F3D"
+                        style={{ marginLeft: 6, opacity: 0.8 }}
+                      />
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -474,14 +589,18 @@ export default function HomeDashboard() {
             </View>
           ) : (
             <RNAnimated.FlatList
+              key={`grid-2`} // Force re-mount for numColumns change
               data={filteredFoods}
               keyExtractor={(item) => item.id}
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
               renderItem={({ item }) => (
                 <FoodCard
                   item={item}
                   width={cardWidth}
                   isFavorite={favorites.includes(item.id)}
-                  isOpen={isOpen}
+                  isOpen={!isGlobalMode && isServiceable}
+                  catalogMode={catalogMode}
                   onToggleFavorite={handleToggleFavorite}
                   onAddToCart={handleAddToCart}
                   onPress={handleFoodPress}
@@ -561,6 +680,7 @@ export default function HomeDashboard() {
         onToggleFavorite={handleToggleFavorite}
         onClose={() => setShowDetailModal(false)}
         onAddToCart={handleAddToCart}
+        catalogMode={catalogMode}
         onCheckout={() => {
           setShowDetailModal(false);
           setActiveTab('shopping-cart');
@@ -573,7 +693,7 @@ export default function HomeDashboard() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FB',
+    backgroundColor: '#FBEAD6', // 60% Champagne
   },
   header: {
     flexDirection: 'row',
@@ -585,13 +705,12 @@ const styles = StyleSheet.create({
   },
   locationContainer: {
     flex: 1,
-    maxWidth: 240,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F1E8',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+    backgroundColor: '#F0C4CB', // 30% Blush
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 16,
     marginRight: 10,
   },
   deliveryTextWrap: {
@@ -600,7 +719,7 @@ const styles = StyleSheet.create({
   },
   deliveryLabel: {
     fontSize: 10,
-    color: '#8A8A8A',
+    color: '#7A5560', // Body Mauve
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -614,7 +733,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: '700',
-    color: '#2C2C2C',
+    color: '#4A2C35', // Heading Mauve
   },
   headerRight: {
     flexDirection: 'row',
@@ -624,12 +743,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0C4CB', // Blush
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: '#C87D87',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.15,
     shadowRadius: 5,
     elevation: 2,
   },
@@ -637,12 +756,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0C4CB', // Blush
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: '#C87D87',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.15,
     shadowRadius: 5,
     elevation: 2,
   },
@@ -650,7 +769,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -2,
-    backgroundColor: '#D94F3D',
+    backgroundColor: '#C87D87', // Antique Rose
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -672,7 +791,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#2C2C2C',
+    color: '#4A2C35', // Heading Mauve
     lineHeight: 34,
     fontFamily: 'Outfit_800ExtraBold',
   },
@@ -726,12 +845,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0C4CB', // Blush
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 52,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
+    shadowColor: '#C87D87',
+    shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 2,
@@ -740,19 +859,19 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 10,
     fontSize: 15,
-    color: '#2C2C2C',
+    color: '#4A2C35', // Mauve
     fontWeight: '500',
     fontFamily: 'Outfit_500Medium',
   },
   filterButton: {
     width: 52,
     height: 52,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0C4CB', // Blush
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
+    shadowColor: '#C87D87',
+    shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 2,
@@ -767,42 +886,59 @@ const styles = StyleSheet.create({
   categoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0C4CB', // Blush
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 30,
     borderWidth: 1.5,
     borderColor: 'transparent',
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
+    shadowColor: '#C87D87',
+    shadowOpacity: 0.1,
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 6,
     elevation: 1,
   },
   categoryCardActive: {
-    borderColor: '#D94F3D',
+    borderColor: '#C87D87', // Antique Rose
+    backgroundColor: '#FBEAD6', // Champagne for active pill
   },
   categoryIconWrap: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#FBEAD6', // Champagne
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
   },
   categoryIconWrapActive: {
-    backgroundColor: '#FDECEB',
+    backgroundColor: '#FBEAD6',
+    borderWidth: 2,
+    borderColor: '#C87D87', // Antique Rose
   },
   categoryName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#8A8A8A',
-    fontFamily: 'Outfit_600SemiBold',
+    color: '#7A5560', // Body Mauve
+    fontFamily: 'Outfit-Regular',
   },
   categoryNameActive: {
-    color: '#D94F3D',
+    color: '#4A2C35', // Heading Mauve
     fontWeight: '700',
+  },
+  sakuraDecoration: {
+    position: 'absolute',
+    top: -8,
+    right: -4,
+    transform: [{ rotate: '20deg' }],
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 2,
+    shadowColor: '#D94F3D',
+    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 4,
   },
   gridContent: {
     paddingHorizontal: 20,
@@ -835,15 +971,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 8,
+    paddingVertical: 10,
     gap: 10,
+    minHeight: 44,
   },
   outsideRadiusText: {
     color: '#FFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    fontFamily: 'Outfit_600SemiBold',
+    fontFamily: 'Outfit-Regular',
     flex: 1,
+    lineHeight: 16,
   },
   softMenuBanner: {
     backgroundColor: '#8A8A8A',
@@ -852,21 +990,59 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     gap: 10,
+    minHeight: 44,
   },
   softMenuText: {
     color: '#FFF',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     flex: 1,
     lineHeight: 16,
+    fontFamily: 'Outfit-Regular',
+  },
+  globalModeBanner: {
+    backgroundColor: '#4A90E2',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    gap: 10,
+    minHeight: 44,
+  },
+  globalModeBannerText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 16,
+    fontFamily: 'Outfit-Regular',
   },
   locationIconWrap: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#FDECEB',
+    backgroundColor: '#C87D87', // Antique Rose
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 4,
+  },
+  smartMessageBanner: {
+    backgroundColor: '#F0C4CB', // Blush
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    gap: 10,
+    minHeight: 44,
+    borderBottomWidth: 1,
+    borderBottomColor: '#C87D87',
+  },
+  smartMessageText: {
+    color: '#4A2C35', // Mauve
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+    lineHeight: 16,
+    fontFamily: 'Outfit_700Bold',
   },
 });

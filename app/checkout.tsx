@@ -22,7 +22,10 @@ import Animated, {
     withTiming
 } from 'react-native-reanimated';
 import { useMenuStore } from '../lib/menu_store';
-import { useUiStore, addOrder, clearCart, formatAddressForDisplay, Order } from '../lib/ui_store';
+import { addOrder, formatAddressForDisplay, Order, useUiStore } from '../lib/ui_store';
+import { useLocation } from '@/state/contexts/LocationContext';
+import { useBranch } from '@/state/contexts/BranchContext';
+import { useCart } from '@/state/contexts/CartContext';
 import { getDistanceKm } from '../lib/google_location';
 import { submitOrder, validateCartStock, type OrderPayload } from '../lib/order_api';
 import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
@@ -78,8 +81,15 @@ export default function CheckoutScreen() {
         setMenuItems(initialCart);
     }, [initialCart]);
 
-    const { userId, selectedBranch, addresses, activeAddressId } = useUiStore();
-    const activeAddress = addresses.find(a => a.id === activeAddressId) || (addresses.length > 0 ? addresses[0] : null);
+    const { userId } = useUiStore();
+    const { state: locationState } = useLocation();
+    const { state: branchState } = useBranch();
+    const { state: cartState, dispatch: cartDispatch } = useCart();
+
+    const { selectedAddress: activeAddress } = locationState;
+    const { selectedBranch } = branchState;
+    const { items: cartItems } = cartState;
+
     const formattedActiveAddress = activeAddress ? formatAddressForDisplay(activeAddress) : '';
     const formattedMainAddress = formattedActiveAddress.split('\n')[0]?.split(',')[0] || '';
 
@@ -180,6 +190,23 @@ export default function CheckoutScreen() {
             return;
         }
 
+        // Strict Availability & Branch Ownership Check
+        const invalidItems = menuItems.filter(item => {
+            const storeItem = storeItems.find(s => s.id === item.id);
+            // 🛡️ Validate item exists, is available, AND belongs to the selected branch
+            return !storeItem || !storeItem.is_available || (storeItem.branch_id && Number(storeItem.branch_id) !== Number(selectedBranch.id));
+        });
+
+        if (invalidItems.length > 0) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert(
+                "Items Unavailable", 
+                "Some items in your cart are no longer available or do not belong to the selected branch. Please update your cart to continue.",
+                [{ text: "OK", onPress: () => router.back() }]
+            );
+            return;
+        }
+
         const hasExceededLocalStock = menuItems.some((item) => {
             const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
             return item.quantity > maxQuantity;
@@ -255,7 +282,7 @@ export default function CheckoutScreen() {
             // 5. Save order locally, clear cart, then navigate to tracking
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             addOrder(newOrder);
-            clearCart();
+            cartDispatch({ type: 'CLEAR_CART' });
 
             router.replace({
                 pathname: '/track-order',

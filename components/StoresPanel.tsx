@@ -1,5 +1,5 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     Alert,
     FlatList,
@@ -14,71 +14,10 @@ import {
 import { MapView, Marker, type MapViewInstance } from './MapComponent';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInUp } from 'react-native-reanimated';
-import * as Location from 'expo-location';
-import api from '@/lib/api';
-import { clearCart, setSelectedBranch, useUiStore, type SelectedBranch } from '@/lib/ui_store';
-
-type Branch = {
-    name: string;
-    id: number;
-    address: string;
-    latitude: number;
-    longitude: number;
-    delivery_radius_km: number;
-    distance_km: number;
-    is_available: boolean;
-    status: 'open' | 'closed';
-    status_text: string;
-};
-
-type ApiBranch = {
-    id: number | string;
-    name?: string;
-    address?: string;
-    latitude?: number | string;
-    longitude?: number | string;
-    delivery_radius_km?: number | string;
-    distance_km?: number | string;
-    distance?: number | string;
-    is_available?: boolean;
-    status?: 'open' | 'closed';
-    status_text?: string;
-};
-const EARTH_RADIUS_KM = 6371;
-
-const toRadians = (deg: number): number => (deg * Math.PI) / 180;
-const toNumberOrNull = (value: unknown): number | null => {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-};
-
-const toBooleanOrNull = (value: unknown): boolean | null => {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return value === 1 ? true : value === 0 ? false : null;
-    if (typeof value === 'string') {
-        const v = value.trim().toLowerCase();
-        if (v === '1' || v === 'true') return true;
-        if (v === '0' || v === 'false') return false;
-    }
-    return null;
-};
-
-const calculateDistanceKm = (
-    userLat: number,
-    userLng: number,
-    branchLat: number,
-    branchLng: number
-): number => {
-    const dLat = toRadians(branchLat - userLat);
-    const dLng = toRadians(branchLng - userLng);
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRadians(userLat)) *
-            Math.cos(toRadians(branchLat)) *
-            Math.sin(dLng / 2) ** 2;
-
-    return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(a));
-};
+import { useBranch } from '@/state/contexts/BranchContext';
+import { useAppStateFlow } from '@/hooks/useAppStateFlow';
+import { useCart } from '@/state/contexts/CartContext';
+import { type SelectedBranch } from '@/lib/ui_store';
 
 interface StoresPanelProps {
     onOrderNow: () => void;
@@ -88,179 +27,18 @@ interface StoresPanelProps {
 export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelProps) {
     const [search, setSearch] = useState('');
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
-    const [branches, setBranches] = useState<Branch[]>([]);
-    const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-    const [isRefreshingLocation, setIsRefreshingLocation] = useState(false);
-    const mapRef = useRef<MapViewInstance>(null);
-    const { selectedBranch, cartItems, addresses, activeAddressId } = useUiStore();
+    
+    // 🧠 CENTRAL STATE ENGINE SUBSCRIPTION
+    const { state: branchState } = useBranch();
+    const { setBranch } = useAppStateFlow();
+    const { state: cartState } = useCart();
 
-    const fallbackCoords = useMemo(() => {
-        const activeAddress = addresses.find((a) => a.id === activeAddressId) || null;
-        const addressCoords =
-            Number.isFinite(Number(activeAddress?.latitude)) &&
-            Number.isFinite(Number(activeAddress?.longitude))
-                ? {
-                      lat: Number(activeAddress?.latitude),
-                      lng: Number(activeAddress?.longitude),
-                  }
-                : null;
-        if (addressCoords) return addressCoords;
-
-        const branchCoords =
-            Number.isFinite(Number(selectedBranch?.latitude)) &&
-            Number.isFinite(Number(selectedBranch?.longitude))
-                ? {
-                      lat: Number(selectedBranch?.latitude),
-                      lng: Number(selectedBranch?.longitude),
-                  }
-                : null;
-        return branchCoords;
-    }, [addresses, activeAddressId, selectedBranch?.latitude, selectedBranch?.longitude]);
-
-    const effectiveLocation = userLocation || fallbackCoords;
-    const effectiveLat = effectiveLocation?.lat;
-    const effectiveLng = effectiveLocation?.lng;
-
-    const requestUserLocation = useCallback(async (): Promise<void> => {
-        try {
-            setIsRefreshingLocation(true);
-            const lastKnown = await Location.getLastKnownPositionAsync({});
-            if (lastKnown?.coords) {
-                setUserLocation({
-                    lat: lastKnown.coords.latitude,
-                    lng: lastKnown.coords.longitude,
-                });
-            }
-
-            const permission = await Location.requestForegroundPermissionsAsync();
-            if (permission.status !== 'granted') {
-                return;
-            }
-
-            const position = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.Balanced,
-            });
-
-            setUserLocation({
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
-            });
-        } catch (error) {
-            console.error('Failed to get user GPS location:', error);
-        } finally {
-            setIsRefreshingLocation(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        requestUserLocation();
-    }, [requestUserLocation]);
-
-    useEffect(() => {
-        const fetchBranches = async (): Promise<void> => {
-            try {
-                const response = await api.get('/branches', {
-                    params: effectiveLat !== undefined && effectiveLng !== undefined
-                        ? { lat: effectiveLat, lng: effectiveLng }
-                        : undefined,
-                });
-                const payload = response.data;
-                const rows: ApiBranch[] = Array.isArray(payload)
-                    ? payload
-                    : (payload?.data || payload?.branches || []);
-
-                const mapped: Branch[] = rows
-                    .map((row) => ({
-                        id: Number(row.id),
-                        name: row.name || 'Branch',
-                        address: row.address || 'No address',
-                        latitude: toNumberOrNull(row.latitude) ?? 0,
-                        longitude: toNumberOrNull(row.longitude) ?? 0,
-                        delivery_radius_km: Number(row.delivery_radius_km || 0),
-                        distance_km:
-                            toNumberOrNull(row.distance_km) ??
-                            toNumberOrNull(row.distance) ??
-                            Number.NaN,
-                        is_available: toBooleanOrNull(row.is_available) ?? false,
-                        status: (row.status === 'open' || row.status === 'closed') ? row.status : 'open',
-                        status_text: row.status_text || '24hrs Open',
-                    }))
-                    .filter(
-                        (row) =>
-                            Number.isFinite(row.id)
-                    );
-
-                const withComputedDistance = mapped.map((row) => {
-                    const hasCoords = row.latitude !== 0 || row.longitude !== 0;
-                    const computedDistance =
-                        effectiveLat !== undefined && effectiveLng !== undefined && hasCoords
-                            ? calculateDistanceKm(
-                                  effectiveLat,
-                                  effectiveLng,
-                                  row.latitude,
-                                  row.longitude
-                              )
-                            : Number.NaN;
-
-                    const distance_km = Number.isFinite(row.distance_km)
-                        ? row.distance_km
-                        : computedDistance;
-
-                    const apiAvailability = toBooleanOrNull((rows.find((r) => Number(r.id) === row.id) || {}).is_available);
-                    const is_available =
-                        apiAvailability !== null
-                            ? apiAvailability
-                            : (Number.isFinite(distance_km) && distance_km <= row.delivery_radius_km);
-
-                    return {
-                        ...row,
-                        distance_km,
-                        is_available,
-                    };
-                });
-
-                setBranches(withComputedDistance.sort((a, b) => a.distance_km - b.distance_km));
-            } catch (error) {
-                console.error('Failed to fetch branches:', error);
-                // Keep existing list to avoid blank UI flashes on transient failures.
-            }
-        };
-
-        fetchBranches();
-    }, [effectiveLat, effectiveLng]);
-
-    const nearestAvailableBranch = useMemo(() => {
-        const available = branches
-            .filter((branch) => branch.is_available)
-            .sort((a, b) => a.distance_km - b.distance_km);
-        return available[0] || null;
-    }, [branches]);
-
-    useEffect(() => {
-        if (!nearestAvailableBranch) return;
-        const autoSelected: SelectedBranch = {
-            id: nearestAvailableBranch.id,
-            name: nearestAvailableBranch.name,
-            address: nearestAvailableBranch.address,
-            distance_km: nearestAvailableBranch.distance_km,
-            is_available: nearestAvailableBranch.is_available,
-            latitude: nearestAvailableBranch.latitude,
-            longitude: nearestAvailableBranch.longitude,
-            delivery_radius_km: nearestAvailableBranch.delivery_radius_km,
-            status: nearestAvailableBranch.status,
-            status_text: nearestAvailableBranch.status_text,
-        };
-
-        // Always lock selected branch to the nearest available one.
-        if (selectedBranch?.id !== autoSelected.id) {
-            setSelectedBranch(autoSelected);
-        }
-    }, [branches, nearestAvailableBranch, selectedBranch]);
+    const { availableBranches: branches, selectedBranch, isLoading } = branchState;
+    const { items: cartItems } = cartState;
 
     const filteredBranches = useMemo(() => {
         if (!search.trim()) return branches;
         const query = search.toLowerCase();
-
         return branches.filter(
             (b) =>
                 b.name.toLowerCase().includes(query) ||
@@ -268,8 +46,8 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
         );
     }, [branches, search]);
 
-    const handleNavigate = (branch: Branch) => {
-        if (!Number.isFinite(branch.latitude) || !Number.isFinite(branch.longitude) || (branch.latitude === 0 && branch.longitude === 0)) {
+    const handleNavigate = (branch: SelectedBranch) => {
+        if (!branch.latitude || !branch.longitude) {
             Alert.alert('Location unavailable', 'This branch has no map coordinates yet.');
             return;
         }
@@ -290,26 +68,11 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
         }
     };
 
-    const applyBranchSelection = (branch: Branch): void => {
-        setSelectedBranch({
-            id: branch.id,
-            name: branch.name,
-            address: branch.address,
-            distance_km: branch.distance_km,
-            is_available: branch.is_available,
-            latitude: branch.latitude,
-            longitude: branch.longitude,
-            delivery_radius_km: branch.delivery_radius_km,
-            status: branch.status,
-            status_text: branch.status_text,
-        });
-    };
-
-    const handleSelectBranch = (branch: Branch): void => {
+    const handleSelectBranch = async (branch: SelectedBranch): Promise<void> => {
         if (!branch.is_available) {
             Alert.alert(
-                'Delivery Not Available',
-                'This branch does not currently deliver to your location. Please select a nearby branch.'
+                'Outside Delivery Area',
+                'This branch is currently unavailable for delivery to your selected location.'
             );
             return;
         }
@@ -322,15 +85,14 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
         if (cartItems.length > 0) {
             Alert.alert(
                 'Change Branch?',
-                'Your cart belongs to another branch. Switching branch will clear your cart.',
+                'Switching branches will clear your current cart.',
                 [
                     { text: 'Cancel', style: 'cancel' },
                     {
                         text: 'Switch Branch',
                         style: 'destructive',
-                        onPress: () => {
-                            clearCart();
-                            applyBranchSelection(branch);
+                        onPress: async () => {
+                            await setBranch(branch, true);
                             onOrderNow();
                         },
                     },
@@ -339,32 +101,28 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
             return;
         }
 
-        applyBranchSelection(branch);
+        await setBranch(branch, true);
         onOrderNow();
     };
 
-    const renderBranchCard = ({ item, index }: { item: Branch; index: number }) => {
+    const renderBranchCard = ({ item, index }: { item: SelectedBranch; index: number }) => {
         const distanceKm = Number(item.distance_km ?? 0);
-        const inRange = item.is_available;
+        const inRange = !!item.is_available;
         const isSelected = selectedBranch?.id === item.id;
-        const isRecommended = nearestAvailableBranch?.id === item.id && index === 0;
 
         return (
-            <View style={[styles.card, isSelected && styles.cardSelected]}>
+            <Animated.View 
+                entering={FadeInUp.delay(index * 50).duration(400)}
+                style={[styles.card, isSelected && styles.cardSelected]}
+            >
                 <View style={styles.titleRow}>
                     <Text style={styles.cardTitle}>{item.name}</Text>
-                    <View style={styles.badgeRow}>
-                        {isSelected ? (
-                            <View style={styles.selectedBadge}>
-                                <Feather name="check-circle" size={12} color="#FFFFFF" />
-                                <Text style={styles.selectedBadgeText}>Selected</Text>
-                            </View>
-                        ) : isRecommended ? (
-                            <View style={styles.recommendedBadge}>
-                                <Text style={styles.recommendedText}>Recommended</Text>
-                            </View>
-                        ) : null}
-                    </View>
+                    {isSelected && (
+                        <View style={styles.selectedBadge}>
+                            <Feather name="check-circle" size={12} color="#FFFFFF" />
+                            <Text style={styles.selectedBadgeText}>Active</Text>
+                        </View>
+                    )}
                 </View>
                 
                 <View style={styles.statusRow}>
@@ -373,11 +131,11 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                             {item.status === 'open' ? 'Open' : 'Closed'}
                         </Text>
                     </View>
-                    <Text style={styles.statusText}>{item.status_text}</Text>
+                    <Text style={styles.statusText}>{item.status_text || '24hrs Open'}</Text>
                 </View>
 
                 <View style={styles.infoRow}>
-                    <Feather name="map-pin" size={13} color="#D94F3D" style={styles.infoIcon} />
+                    <Feather name="map-pin" size={13} color="#C87D87" style={styles.infoIcon} />
                     <Text style={styles.infoText}>
                         {Number.isFinite(distanceKm) ? `${distanceKm.toFixed(1)} km away` : 'Distance unavailable'}
                     </Text>
@@ -385,9 +143,8 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
 
                 <Text style={styles.addressText}>{item.address}</Text>
                 <Text style={styles.branchMetaText}>
-                    {`Delivery Range: ${item.delivery_radius_km.toFixed(1)} km`}
+                    {`Delivery Range: ${item.delivery_radius_km?.toFixed(1) || '0.0'} km`}
                 </Text>
-                {isSelected ? <Text style={styles.servingTag}>Serving from this branch</Text> : null}
 
                 <View style={styles.btnRow}>
                     <TouchableOpacity 
@@ -405,12 +162,15 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                             handleSelectBranch(item);
                         }}
                     >
-                        <Text style={[styles.filledBtnText, isSelected && styles.filledBtnTextSecondary]}>
-                            {isSelected ? 'Selected Branch' : (inRange ? 'Order Now' : 'Unavailable')}
-                        </Text>
+                        <View style={styles.statusIndicatorRow}>
+                            <View style={[styles.statusDotSmall, { backgroundColor: inRange ? '#4CAF50' : '#FF5252' }]} />
+                            <Text style={[styles.filledBtnText, isSelected && styles.filledBtnTextSecondary]}>
+                                {isSelected ? 'Selected' : (inRange ? 'Order Now' : 'Unavailable')}
+                            </Text>
+                        </View>
                     </TouchableOpacity>
                 </View>
-            </View>
+            </Animated.View>
         );
     };
 
@@ -430,13 +190,12 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                     }}
                     style={styles.headerIconBtn}
                 >
-                    <Feather name={viewMode === 'list' ? "map" : "list"} size={22} color="#2C2C2C" />
+                    <Feather name={viewMode === 'list' ? "map" : "list"} size={22} color="#4A2C35" />
                 </TouchableOpacity>
             </View>
 
             {viewMode === 'list' ? (
                 <>
-                    {/* Search Bar */}
                     <View style={styles.searchWrapper}>
                         <View style={styles.searchContainer}>
                             <Feather name="search" size={20} color="#8A8A8A" />
@@ -447,13 +206,6 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                                 onChangeText={setSearch}
                                 placeholderTextColor="#8A8A8A"
                             />
-                            <TouchableOpacity onPress={requestUserLocation} style={styles.targetButton}>
-                                <MaterialCommunityIcons
-                                    name={isRefreshingLocation ? 'crosshairs-gps' : 'target'}
-                                    size={18}
-                                    color="#D94F3D"
-                                />
-                            </TouchableOpacity>
                         </View>
                     </View>
 
@@ -463,27 +215,9 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                         renderItem={renderBranchCard}
                         ListHeaderComponent={filteredBranches.length > 0 ? <Text style={styles.listSectionTitle}>All Branches</Text> : null}
                         ListEmptyComponent={
-                            <Animated.View 
-                                entering={FadeInUp.delay(200).duration(800)}
-                                style={styles.emptyContainer}
-                            >
-                                <View style={styles.emptyIconCircle}>
-                                    <MaterialCommunityIcons name="store-clock-outline" size={48} color="#D94F3D" />
-                                </View>
-                                <Text style={styles.emptyGreeting}>Konnichiwa!</Text>
-                                <Text style={styles.emptyText}>
-                                    Welcome to Maki-Caps. We are currently expanding our reach to serve you better.
-                                </Text>
-                                <Text style={styles.emptySubText}>
-                                    Our physical stores are currently being prepared. In the meantime, feel free to explore our menu and enjoy our fresh Japanese favorites through delivery!
-                                </Text>
-                                <TouchableOpacity 
-                                    style={styles.exploreBtn}
-                                    onPress={onOrderNow}
-                                >
-                                    <Text style={styles.exploreBtnText}>Explore Menu</Text>
-                                </TouchableOpacity>
-                            </Animated.View>
+                            <View style={styles.emptyContainer}>
+                                <Text style={styles.emptyText}>No branches found</Text>
+                            </View>
                         }
                         contentContainerStyle={[styles.listContent, { paddingBottom: bottomPadding + 40 }]}
                         showsVerticalScrollIndicator={false}
@@ -492,11 +226,10 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
             ) : (
                 <View style={styles.mapContainer}>
                     <MapView
-                        ref={mapRef}
                         style={styles.map}
                         initialRegion={{
-                            latitude: effectiveLocation?.lat || 14.3,
-                            longitude: effectiveLocation?.lng || 121.2,
+                            latitude: branches[0]?.latitude || 14.3,
+                            longitude: branches[0]?.longitude || 121.2,
                             latitudeDelta: 0.8,
                             longitudeDelta: 0.8,
                         }}
@@ -504,7 +237,7 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                         {filteredBranches.map(b => (
                             <Marker
                                 key={b.id}
-                                coordinate={{ latitude: b.latitude, longitude: b.longitude }}
+                                coordinate={{ latitude: b.latitude || 0, longitude: b.longitude || 0 }}
                                 title={b.name}
                                 description={b.address}
                             />
@@ -519,7 +252,7 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#FFF8F2',
+        backgroundColor: '#FBEAD6', // 60% Champagne
     },
     header: {
         flexDirection: 'row',
@@ -528,8 +261,8 @@ const styles = StyleSheet.create({
         height: 72,
         paddingHorizontal: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#F2E8DE',
-        backgroundColor: '#FFFDF9',
+        borderBottomColor: '#C87D87',
+        backgroundColor: '#F0C4CB', // 30% Blush
     },
     headerTitleWrap: {
         alignItems: 'center',
@@ -537,14 +270,13 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 20,
         fontWeight: '800',
-        color: '#2F241F',
-        letterSpacing: 0.2,
+        color: '#4A2C35', // Heading Mauve
     },
     headerSubtitle: {
         marginTop: 2,
         fontSize: 12,
         fontWeight: '600',
-        color: '#A68D7A',
+        color: '#7A5560', // Body Mauve
     },
     headerIconBtn: {
         width: 44,
@@ -552,14 +284,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         borderRadius: 14,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#FBEAD6', // Champagne
         borderWidth: 1,
-        borderColor: '#F0E5D9',
-        shadowColor: '#2C1B10',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 6,
-        elevation: 3,
+        borderColor: '#C87D87',
     },
     searchWrapper: {
         paddingHorizontal: 16,
@@ -568,38 +295,23 @@ const styles = StyleSheet.create({
     searchContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#FBEAD6', // Champagne
         borderRadius: 16,
         paddingHorizontal: 14,
         height: 54,
-        borderWidth: 1,
-        borderColor: '#F0E5D9',
-        shadowColor: '#351F12',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 10,
-        elevation: 3,
+        borderWidth: 1.5,
+        borderColor: '#C87D87',
     },
     searchInput: {
         flex: 1,
         marginLeft: 10,
         fontSize: 15,
-        color: '#2C2C2C',
-        fontWeight: '600',
-    },
-    targetButton: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: '#FDECEB',
-        justifyContent: 'center',
-        alignItems: 'center',
+        color: '#4A2C35', // Mauve
     },
     listSectionTitle: {
         fontSize: 12,
         fontWeight: '700',
-        color: '#B0927C',
-        letterSpacing: 0.7,
+        color: '#7A5560', // Body Mauve
         textTransform: 'uppercase',
         marginHorizontal: 20,
         marginTop: 4,
@@ -612,29 +324,25 @@ const styles = StyleSheet.create({
     card: {
         paddingHorizontal: 16,
         paddingVertical: 18,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#F0C4CB', // 30% Blush
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#F3E7DC',
-        marginHorizontal: 2,
+        borderColor: '#C87D87',
         marginBottom: 12,
-        shadowColor: '#2C1E14',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.08,
-        shadowRadius: 14,
         elevation: 4,
+        shadowColor: '#C87D87',
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
     },
     cardSelected: {
-        borderColor: '#D94F3D',
+        borderColor: '#C87D87', // Antique Rose
         borderWidth: 2,
-        backgroundColor: '#FFFBF9',
-        shadowColor: '#D94F3D',
-        shadowOpacity: 0.12,
+        backgroundColor: '#FBEAD6', // Champagne for selected
     },
     cardTitle: {
         fontSize: 18,
         fontWeight: '800',
-        color: '#2F241F',
+        color: '#4A2C35', // Heading Mauve
     },
     titleRow: {
         flexDirection: 'row',
@@ -642,15 +350,10 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         marginBottom: 10,
     },
-    badgeRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
     selectedBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#D94F3D',
+        backgroundColor: '#C87D87', // Antique Rose
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 4,
@@ -660,21 +363,6 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '800',
         color: '#FFFFFF',
-        letterSpacing: 0.2,
-    },
-    recommendedBadge: {
-        backgroundColor: '#FFF4DA',
-        borderColor: '#F7D69D',
-        borderWidth: 1,
-        borderRadius: 12,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-    },
-    recommendedText: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#AA6121',
-        letterSpacing: 0.2,
     },
     statusRow: {
         flexDirection: 'row',
@@ -705,7 +393,7 @@ const styles = StyleSheet.create({
     },
     statusText: {
         fontSize: 13,
-        color: '#5F4C3F',
+        color: '#7A5560', // Body Mauve
         fontWeight: '600',
     },
     infoRow: {
@@ -718,34 +406,19 @@ const styles = StyleSheet.create({
     },
     infoText: {
         fontSize: 13,
-        color: '#D94F3D',
+        color: '#C87D87', // Antique Rose
         fontWeight: '700',
-    },
-    dot: {
-        width: 3,
-        height: 3,
-        borderRadius: 1.5,
-        backgroundColor: '#8A8A8A',
-        marginHorizontal: 6,
     },
     addressText: {
         fontSize: 13,
-        color: '#9A8577',
+        color: '#7A5560', // Body Mauve
         fontWeight: '600',
         marginBottom: 6,
-        letterSpacing: 0.2,
-        lineHeight: 18,
     },
     branchMetaText: {
         fontSize: 12,
-        color: '#A68D7A',
+        color: '#7A5560', // Body Mauve
         fontWeight: '600',
-        marginBottom: 8,
-    },
-    servingTag: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#D94F3D',
         marginBottom: 14,
     },
     btnRow: {
@@ -759,40 +432,42 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         height: 46,
         borderRadius: 23,
-        borderWidth: 1.3,
-        borderColor: '#DCCFC2',
-        backgroundColor: '#FFFDFB',
-        gap: 6,
+        borderWidth: 1.5,
+        borderColor: '#C87D87', // Antique Rose
     },
     outlineBtnText: {
         fontSize: 14,
         fontWeight: '700',
-        color: '#3B3029',
+        color: '#4A2C35', // Mauve
     },
     filledBtn: {
         flex: 1,
         height: 46,
         borderRadius: 23,
-        backgroundColor: '#D94F3D',
+        backgroundColor: '#C87D87', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#B53E2E',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.22,
-        shadowRadius: 8,
-        elevation: 3,
     },
     filledBtnSecondary: {
-        backgroundColor: '#FFF3E8',
-        borderWidth: 1.3,
-        borderColor: '#FFD5B8',
+        backgroundColor: '#FBEAD6', // Champagne
+        borderWidth: 1.5,
+        borderColor: '#C87D87',
     },
     filledBtnDisabled: {
-        backgroundColor: '#E8E3DF',
+        backgroundColor: '#F0C4CB', // Blush
+        opacity: 0.5,
         borderWidth: 1.2,
-        borderColor: '#D3C9C2',
-        shadowOpacity: 0,
-        elevation: 0,
+        borderColor: '#C87D87',
+    },
+    statusIndicatorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    statusDotSmall: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
     },
     filledBtnText: {
         fontSize: 14,
@@ -800,66 +475,20 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
     },
     filledBtnTextSecondary: {
-        color: '#2C2C2C',
+        color: '#C87D87', // Antique Rose
     },
     mapContainer: {
         flex: 1,
     },
     map: {
-        ...StyleSheet.absoluteFillObject,
+        flex: 1,
     },
     emptyContainer: {
-        flex: 1,
+        padding: 40,
         alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 32,
-        paddingTop: 60,
-    },
-    emptyIconCircle: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        backgroundColor: '#FFF0E6',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 24,
-    },
-    emptyGreeting: {
-        fontSize: 24,
-        fontWeight: '900',
-        color: '#2F241F',
-        marginBottom: 12,
-        letterSpacing: -0.5,
     },
     emptyText: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#3A3029',
-        textAlign: 'center',
-        marginBottom: 12,
-        lineHeight: 24,
-    },
-    emptySubText: {
+        color: '#7A5560', // Body Mauve
         fontSize: 14,
-        color: '#8E7A6E',
-        textAlign: 'center',
-        lineHeight: 20,
-        marginBottom: 32,
-    },
-    exploreBtn: {
-        backgroundColor: '#D94F3D',
-        paddingHorizontal: 32,
-        paddingVertical: 14,
-        borderRadius: 25,
-        shadowColor: '#D94F3D',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        elevation: 4,
-    },
-    exploreBtnText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: '700',
     },
 });

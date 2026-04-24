@@ -25,6 +25,8 @@ import { initRealtime } from '@/lib/realtime';
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
 
+import { AppProvider } from '@/state/AppProvider';
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [loaded, error] = useFonts({
@@ -43,7 +45,7 @@ export default function RootLayout() {
   }, [loaded, error]);
 
   useEffect(() => {
-    initRealtime();
+    // Realtime disabled for stability
   }, []);
 
   if (!loaded && !error) {
@@ -52,25 +54,27 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" options={{ animation: 'none' }} />
-          <Stack.Screen name="home_dashboard" options={{ animation: 'none' }} />
-          <Stack.Screen name="favorite" options={{ animation: 'none' }} />
-          <Stack.Screen name="favorite_page" options={{ animation: 'none' }} />
-          <Stack.Screen name="profile" options={{ animation: 'none' }} />
-          <Stack.Screen name="personal-information" options={{ animation: 'none' }} />
-          <Stack.Screen name="cart" />
-          <Stack.Screen name="login" />
-          <Stack.Screen name="signup" />
-          <Stack.Screen name="forgot-password" />
-          <Stack.Screen name="verify-code" />
-          <Stack.Screen name="reset-password" />
-          <Stack.Screen name="my-orders" />
-          <Stack.Screen name="track-order" options={{ animation: 'slide_from_right' }} />
-        </Stack>
-        <StatusBar style="auto" />
-      </ThemeProvider>
+      <AppProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" options={{ animation: 'none' }} />
+            <Stack.Screen name="home_dashboard" options={{ animation: 'none' }} />
+            <Stack.Screen name="favorite" options={{ animation: 'none' }} />
+            <Stack.Screen name="favorite_page" options={{ animation: 'none' }} />
+            <Stack.Screen name="profile" options={{ animation: 'none' }} />
+            <Stack.Screen name="personal-information" options={{ animation: 'none' }} />
+            <Stack.Screen name="cart" />
+            <Stack.Screen name="login" />
+            <Stack.Screen name="signup" />
+            <Stack.Screen name="forgot-password" />
+            <Stack.Screen name="verify-code" />
+            <Stack.Screen name="reset-password" />
+            <Stack.Screen name="my-orders" />
+            <Stack.Screen name="track-order" options={{ animation: 'slide_from_right' }} />
+          </Stack>
+          <StatusBar style="auto" />
+        </ThemeProvider>
+      </AppProvider>
     </SafeAreaProvider>
   );
 }

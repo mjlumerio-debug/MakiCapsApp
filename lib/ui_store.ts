@@ -128,6 +128,14 @@ export const setUserId = (userId: number | null): void => {
   }
 };
 
+export const isAddressInServiceArea = (address: Address | null | undefined): boolean => {
+  if (!address) return false;
+  const prov = (address.province || '').toLowerCase();
+  const city = (address.city || '').toLowerCase();
+  // Service area is Laguna province
+  return prov.includes('laguna') || city.includes('laguna');
+};
+
 export const setSelectedBranch = (branch: SelectedBranch | null): void => {
   setState((prev) => ({
     ...prev,

@@ -88,7 +88,7 @@ export default function DeliveryDetailsModal({
                     <Feather 
                         name={item.notes?.toLowerCase().includes('home') ? 'home' : item.notes?.toLowerCase().includes('work') ? 'briefcase' : 'map-pin'} 
                         size={18} 
-                        color={isActive ? '#FFF' : '#D94F3D'} 
+                        color={isActive ? '#FBEAD6' : '#C87D87'} 
                     />
                 </View>
                 <View style={styles.addressInfo}>
@@ -99,7 +99,7 @@ export default function DeliveryDetailsModal({
                         {item.fullAddress}
                     </Text>
                 </View>
-                {isActive && <Ionicons name="checkmark-circle" size={20} color="#D94F3D" />}
+                {isActive && <Ionicons name="checkmark-circle" size={20} color="#C87D87" />}
             </TouchableOpacity>
         );
     };
@@ -138,7 +138,7 @@ export default function DeliveryDetailsModal({
                             <View style={styles.header}>
                                 <Text style={styles.headerTitle}>Delivery Address</Text>
                                 <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                                    <Ionicons name="close" size={24} color="#2C2C2C" />
+                                    <Ionicons name="close" size={24} color="#4A2C35" />
                                 </TouchableOpacity>
                             </View>
 
@@ -152,7 +152,7 @@ export default function DeliveryDetailsModal({
                                     onChangeText={setSearchQuery}
                                     placeholderTextColor="#8A8A8A"
                                 />
-                                {isSearching && <ActivityIndicator size="small" color="#D94F3D" style={{ marginRight: 12 }} />}
+                                {isSearching && <ActivityIndicator size="small" color="#C87D87" style={{ marginRight: 12 }} />}
                                 {searchQuery.length > 0 && !isSearching && (
                                     <TouchableOpacity onPress={() => setSearchQuery('')}>
                                         <Ionicons name="close-circle" size={20} color="#CCC" style={{ marginRight: 12 }} />
@@ -183,7 +183,7 @@ export default function DeliveryDetailsModal({
                                                 // Note: HomeDashboard will handle GPS detection if no active address
                                             }}
                                         >
-                                            <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#D94F3D" />
+                                            <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#C87D87" />
                                             <Text style={styles.currentLocationText}>Use Current Location</Text>
                                         </TouchableOpacity>
 
@@ -208,7 +208,7 @@ export default function DeliveryDetailsModal({
                                                 style={styles.manageBtn}
                                                 onPress={onAddAddress}
                                             >
-                                                <Feather name="plus" size={18} color="#D94F3D" />
+                                                <Feather name="plus" size={18} color="#C87D87" />
                                                 <Text style={styles.manageBtnText}>Add New Address</Text>
                                             </TouchableOpacity>
                                         )}
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
         width: '100%',
     },
     sheet: {
-        backgroundColor: '#FFF',
+        backgroundColor: '#FBEAD6', // 60% Champagne
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
         minHeight: '60%',
@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
     handle: {
         width: 40,
         height: 5,
-        backgroundColor: '#E0E0E0',
+        backgroundColor: '#C87D87', // Antique Rose
         borderRadius: 2.5,
         alignSelf: 'center',
         marginTop: 12,
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 20,
         fontWeight: '800',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
         fontFamily: 'Outfit_800ExtraBold',
     },
     closeButton: {
@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
     searchContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F5F5',
+        backgroundColor: '#F0C4CB', // 30% Blush
         marginHorizontal: 24,
         borderRadius: 16,
         height: 52,
@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
         flex: 1,
         paddingHorizontal: 12,
         fontSize: 16,
-        color: '#2C2C2C',
+        color: '#4A2C35', // Mauve
         fontFamily: 'Outfit_500Medium',
     },
     body: {
@@ -293,13 +293,13 @@ const styles = StyleSheet.create({
         marginLeft: 12,
         fontSize: 16,
         fontWeight: '600',
-        color: '#D94F3D',
+        color: '#C87D87', // Antique Rose
         fontFamily: 'Outfit_600SemiBold',
     },
     sectionTitle: {
         fontSize: 14,
         fontWeight: '700',
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         textTransform: 'uppercase',
         letterSpacing: 1,
         marginBottom: 12,
@@ -311,7 +311,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#F5F5F5',
+        borderBottomColor: '#F0C4CB', // Blush
     },
     addressItemActive: {
         // Option highlight
@@ -320,13 +320,13 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: 20,
-        backgroundColor: '#FDECEB',
+        backgroundColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 16,
     },
     iconBoxActive: {
-        backgroundColor: '#D94F3D',
+        backgroundColor: '#C87D87', // Antique Rose
     },
     addressInfo: {
         flex: 1,
@@ -334,12 +334,12 @@ const styles = StyleSheet.create({
     addressTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
         fontFamily: 'Outfit_700Bold',
     },
     addressSubtitle: {
         fontSize: 13,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         marginTop: 2,
         fontFamily: 'Outfit_400Regular',
     },
@@ -348,17 +348,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#F5F5F5',
+        borderBottomColor: '#F0C4CB', // Blush
     },
     predictionTitle: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Mauve
         fontFamily: 'Outfit_600SemiBold',
     },
     predictionSubtitle: {
         fontSize: 13,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         marginTop: 2,
         fontFamily: 'Outfit_400Regular',
     },
@@ -369,7 +369,7 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         marginTop: 8,
         borderWidth: 1.5,
-        borderColor: '#D94F3D',
+        borderColor: '#C87D87', // Antique Rose
         borderRadius: 16,
         borderStyle: 'dashed',
     },
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
         marginLeft: 8,
         fontSize: 15,
         fontWeight: '700',
-        color: '#D94F3D',
+        color: '#C87D87', // Antique Rose
         fontFamily: 'Outfit_700Bold',
     },
     emptyContainer: {
@@ -386,13 +386,13 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         fontSize: 15,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         textAlign: 'center',
         fontFamily: 'Outfit_400Regular',
     },
     addFirstBtn: {
         marginTop: 16,
-        backgroundColor: '#D94F3D',
+        backgroundColor: '#C87D87', // Antique Rose
         paddingHorizontal: 24,
         paddingVertical: 12,
         borderRadius: 30,

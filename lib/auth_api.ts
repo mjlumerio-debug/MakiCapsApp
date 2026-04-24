@@ -48,7 +48,7 @@ const mapAuthUser = (user: any, emailFallback = ''): AuthUser => ({
 
 export const fetchCurrentUser = async (): Promise<AuthUser> => {
   try {
-    const response = await api.get('/user');
+    const response = await api.get('user');
     const data = response.data;
     // Handle nested user object if present (Laravel usually returns { user: {...} } or just {...})
     const userData = data.user || data;
@@ -67,7 +67,7 @@ export const fetchCurrentUser = async (): Promise<AuthUser> => {
 
 export const signupUser = async (payload: SignupPayload): Promise<AuthUser> => {
   try {
-    const response = await api.post('/register', {
+    const response = await api.post('register', {
       first_name: payload.firstName,
       last_name: payload.lastName,
       email: payload.email,
@@ -101,7 +101,7 @@ export const signupUser = async (payload: SignupPayload): Promise<AuthUser> => {
 
 export const loginUser = async (payload: LoginPayload): Promise<AuthUser> => {
   try {
-    const response = await api.post('/login', {
+    const response = await api.post('login', {
       email: payload.email,
       password: payload.password,
     });
@@ -141,7 +141,7 @@ export const requestEmailVerificationCode = async (
   email: string
 ): Promise<RequestEmailVerificationResponse> => {
   try {
-    const response = await api.post('/verify-email/request', { email });
+    const response = await api.post('verify-email/request', { email });
     return {
       ok: true,
       message: response.data.message || 'Verification code sent.',
@@ -164,7 +164,7 @@ export const verifyEmailCode = async (
   code: string
 ): Promise<VerifyEmailCodeResponse> => {
   try {
-    const response = await api.post('/verify-email/verify', { email, code });
+    const response = await api.post('verify-email/verify', { email, code });
     return {
       ok: true,
       message: response.data.message || 'Code verified.',
@@ -195,7 +195,7 @@ export const requestPasswordReset = async (
   email: string
 ): Promise<RequestEmailVerificationResponse> => {
   try {
-    const response = await api.post('/verify-email/request', { email });
+    const response = await api.post('verify-email/request', { email });
     return {
       ok: true,
       message: response.data.message || 'Reset code sent.',
@@ -219,7 +219,7 @@ export const changePassword = async (
   newPassword: string
 ): Promise<{ ok: boolean; message: string }> => {
   try {
-    const response = await api.post('/reset-password', {
+    const response = await api.post('reset-password', {
       email,
       verification_proof: verificationProof,
       password: newPassword,
@@ -310,7 +310,7 @@ export const verifyPaymentOtp = async (
 export const updateUserProfile = async (payload: { firstName: string; lastName: string; mobileNumber: string }): Promise<void> => {
   try {
     console.log('[AuthAPI] Updating profile:', payload);
-    await api.post('/profile/update', {
+    await api.post('profile/update', {
       first_name: payload.firstName,
       last_name: payload.lastName,
       mobile_number: payload.mobileNumber,

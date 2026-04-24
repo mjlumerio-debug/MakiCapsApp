@@ -75,7 +75,7 @@ const BottomNav = memo(function BottomNav({
             <View style={styles.navIconWrap}>
               <RNAnimated.View style={[styles.navIconLayer, { opacity: inactiveProgress }]}>
                 {tab === 'stores' ? (
-                  <MaterialCommunityIcons name="store" size={20} color="#8A8A8A" />
+                  <MaterialCommunityIcons name="store" size={20} color="#7A5560" />
                 ) : (
                   <Feather
                     name={
@@ -84,13 +84,13 @@ const BottomNav = memo(function BottomNav({
                           tab as any
                     }
                     size={18}
-                    color="#8A8A8A"
+                    color="#7A5560"
                   />
                 )}
               </RNAnimated.View>
               <RNAnimated.View style={[styles.navIconLayer, { opacity: activeProgress }]}>
                 {tab === 'stores' ? (
-                  <MaterialCommunityIcons name="store" size={20} color="#FFFFFF" />
+                  <MaterialCommunityIcons name="store" size={20} color="#FBEAD6" />
                 ) : (
                   <Feather
                     name={
@@ -99,7 +99,7 @@ const BottomNav = memo(function BottomNav({
                           tab as any
                     }
                     size={18}
-                    color="#FFFFFF"
+                    color="#FBEAD6"
                   />
                 )}
               </RNAnimated.View>
@@ -132,20 +132,20 @@ const styles = StyleSheet.create({
     position: 'absolute',
     alignSelf: 'center',
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(240, 196, 203, 0.95)', // Blush
     borderRadius: 32,
     paddingHorizontal: 12,
     paddingVertical: 10,
     width: 310,
     justifyContent: 'space-between',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: '#C87D87',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.15,
     shadowRadius: 20,
     elevation: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
+    borderColor: 'rgba(200, 125, 135, 0.3)',
     zIndex: 1000,
   },
   navTabButton: {
@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
   },
   navTabActiveBg: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#C87D87', // Antique Rose
     borderRadius: 22,
   },
   navIconWrap: {
@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    backgroundColor: '#D94F3D',
+    backgroundColor: '#C87D87', // Antique Rose
     minWidth: 18,
     height: 18,
     borderRadius: 9,
@@ -182,10 +182,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: '#FBEAD6', // Champagne
   },
   navBadgeText: {
-    color: '#FFFFFF',
+    color: '#FBEAD6', // Champagne
     fontSize: 9,
     fontWeight: '800',
   },

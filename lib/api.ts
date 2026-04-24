@@ -3,7 +3,7 @@ import axios from 'axios';
 
 export const PRODUCTION_API_BASE_URL = 'https://makidesuoperation.site/api/v1';
 
-const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || PRODUCTION_API_BASE_URL).replace(/\/+$/, '');
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || PRODUCTION_API_BASE_URL).replace(/\/+$/, '') + '/';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -11,7 +11,7 @@ const api = axios.create({
     'Accept': 'application/json',
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // 10 seconds timeout
+  timeout: 30000, // Increased to 30 seconds for production stability
 });
 
 // Add a request interceptor to attach the auth token
@@ -30,6 +30,10 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    // 🔍 Verbose Network Error Logging
+    if (error.message === 'Network Error') {
+        console.error('[API] Network Error: Please check server status at:', API_BASE_URL);
+    }
     return Promise.reject(error);
   }
 );

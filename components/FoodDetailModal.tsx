@@ -6,7 +6,6 @@ import {
     Alert,
     Dimensions,
     Modal,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
@@ -21,7 +20,8 @@ import Animated, {
     withSpring,
     withTiming,
 } from 'react-native-reanimated';
-import { Food } from '../lib/menu_store';
+import { formatPeso, resolveProductImage, type Food } from '../lib/menu_store';
+import { type CatalogMode } from '@/state/reducers/branchReducer';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -33,6 +33,7 @@ type FoodDetailModalProps = {
     onToggleFavorite: (id: string) => void;
     onAddToCart: (item: Food, quantity: number) => void;
     onCheckout: () => void;
+    catalogMode?: CatalogMode;
 };
 
 export default function FoodDetailModal({
@@ -43,7 +44,9 @@ export default function FoodDetailModal({
     onToggleFavorite,
     onAddToCart,
     onCheckout,
+    catalogMode = 'branch',
 }: FoodDetailModalProps) {
+    const isGlobalMode = catalogMode === 'global';
     const translateY = useSharedValue(SCREEN_HEIGHT);
     const opacity = useSharedValue(0);
     const [quantity, setQuantity] = useState(1);
@@ -137,10 +140,16 @@ export default function FoodDetailModal({
         flyOpacity.value = withTiming(0, { duration: 600 });
     };
 
-
     if (!item) return null;
+    
+    // 🍱 UI FORMATTING (Done in the UI layer only)
+    const displayPrice = formatPeso(item.selling_price);
+    const displayImage = resolveProductImage(item.image_path);
+
     const stockCount = Number(item.max_quantity ?? item.stock ?? 0);
-    const isAvailable = stockCount > 0;
+    const isAvailableAtBranch = item.is_available;
+    const isAvailable = !isGlobalMode && stockCount > 0 && isAvailableAtBranch;
+    const canAddToCart = isAvailable && !isGlobalMode;
 
     return (
         <Modal
@@ -154,7 +163,7 @@ export default function FoodDetailModal({
                 <Animated.View style={[styles.backdrop, backdropStyle]} />
 
                 <Animated.View style={flyStyle}>
-                    <Feather name="plus" size={14} color="#FFF" />
+                    <Feather name="plus" size={14} color="#FBEAD6" />
                 </Animated.View>
 
                 <Animated.View style={[styles.container, animatedStyle]}>
@@ -162,7 +171,7 @@ export default function FoodDetailModal({
                         {/* Transparent Header overlaying image */}
                         <View style={styles.headerRow}>
                             <TouchableOpacity style={styles.backBtn} onPress={handleClose}>
-                                <Feather name="arrow-left" size={24} color="#FFF" />
+                                <Feather name="arrow-left" size={24} color="#4A2C35" />
                             </TouchableOpacity>
                             <Text style={styles.headerTitle}>Details</Text>
                             <View style={styles.headerPlaceholder} />
@@ -171,28 +180,54 @@ export default function FoodDetailModal({
                         {/* Full-Width Image "Wrapping" Style */}
                         <View style={styles.imageWrap}>
                             <Image
-                                source={item.image}
+                                source={{ uri: displayImage ?? undefined }}
                                 style={styles.foodImage}
                                 contentFit="cover"
                                 transition={300}
                             />
                             {/* Subtle dark overlay at top for back button legibility */}
                             <View style={styles.topShadow} />
+
+                            {/* Availability Badge */}
+                            {item.availability_status && (
+                                <View style={[
+                                    styles.availabilityBadge,
+                                    item.availability_status === 'available' ? styles.badgeGreen :
+                                    item.availability_status === 'limited' ? styles.badgeYellow : styles.badgeRed
+                                ]}>
+                                    <Text style={styles.availabilityText}>
+                                        {item.availability_status === 'available' ? 'Available' :
+                                         item.availability_status === 'limited' ? 'Nearby' : 'Out of Stock'}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
 
                         {/* Dark Content Card */}
                         <View style={styles.darkContentCard}>
                             <View style={styles.titleRow}>
                                 <View style={styles.titleInfo}>
-                                    <Text style={styles.foodName}>{item.title}</Text>
+                                    <Text style={styles.foodName}>{item.name}</Text>
                                     <View style={styles.priceContainer}>
                                         <Text style={styles.fromLabel}>From: </Text>
-                                        <Text style={styles.priceValue}>{item.price}</Text>
+                                        <Text style={styles.priceValue}>{displayPrice}</Text>
                                     </View>
-                                    {!isAvailable ? (
-                                        <Text style={[styles.stockStatusText, styles.stockUnavailable]}>
-                                            Out of Stock
-                                        </Text>
+                                    {isGlobalMode ? (
+                                        <View style={styles.unavailableBanner}>
+                                            <Ionicons name="globe-outline" size={16} color="#4A90E2" />
+                                            <Text style={[styles.stockStatusText, { color: '#4A90E2' }]}>
+                                                Select a delivery address to order
+                                            </Text>
+                                        </View>
+                                    ) : !isAvailable ? (
+                                        <View style={styles.unavailableBanner}>
+                                            <Feather name="info" size={16} color="#FF6B6B" />
+                                            <Text style={[styles.stockStatusText, styles.stockUnavailable]}>
+                                                {!isAvailableAtBranch 
+                                                    ? (item.availability_status === 'limited' ? 'Available in other branches' : 'Unavailable at branch') 
+                                                    : 'Out of Stock'}
+                                            </Text>
+                                        </View>
                                     ) : null}
                                 </View>
 
@@ -207,7 +242,7 @@ export default function FoodDetailModal({
                                     <Ionicons
                                         name={isFavorite ? "heart" : "heart-outline"}
                                         size={24}
-                                        color={isFavorite ? "#FF5800" : "#FFF"}
+                                        color={isFavorite ? "#C87D87" : "#7A5560"}
                                     />
                                 </TouchableOpacity>
                             </View>
@@ -272,16 +307,16 @@ export default function FoodDetailModal({
                                                 setQuantity(quantity + 1);
                                             }}
                                         >
-                                            <Ionicons name="add" size={20} color="#FFF" />
+                                            <Ionicons name="add" size={20} color="#FBEAD6" />
                                         </TouchableOpacity>
                                     </View>
 
                                     <TouchableOpacity
-                                        style={[styles.atcActionBtn, !isAvailable && styles.atcActionBtnDisabled]}
+                                        style={[styles.atcActionBtn, !canAddToCart && styles.atcActionBtnDisabled]}
                                         onPress={handleAddToCart}
-                                        disabled={!isAvailable}
+                                        disabled={!canAddToCart}
                                     >
-                                        <Text style={styles.atcBtnText}>{isAvailable ? 'Add to Cart' : 'Out of Stock'}</Text>
+                                        <Text style={styles.atcBtnText}>{isGlobalMode ? 'Browse Only' : (isAvailable ? 'Add to Cart' : 'Unavailable')}</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -309,7 +344,7 @@ const styles = StyleSheet.create({
     },
     modalBody: {
         flex: 1,
-        backgroundColor: '#0D0D0D', // Theme like old UI
+        backgroundColor: '#FBEAD6', // Champagne
         borderTopLeftRadius: 40,
         borderTopRightRadius: 40,
         overflow: 'hidden',
@@ -330,17 +365,14 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: 'rgba(0,0,0,0.4)',
+        backgroundColor: 'rgba(240, 196, 203, 0.4)', // Blush with opacity
         justifyContent: 'center',
         alignItems: 'center',
     },
     headerTitle: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#FFF',
-        textShadowColor: 'rgba(0,0,0,0.5)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
+        color: '#4A2C35', // Heading Mauve
     },
     headerPlaceholder: {
         width: 44,
@@ -364,12 +396,12 @@ const styles = StyleSheet.create({
     },
     darkContentCard: {
         flex: 1,
-        backgroundColor: '#121212',
+        backgroundColor: '#F0C4CB', // 30% Blush
         borderTopLeftRadius: 40,
         borderTopRightRadius: 40,
-        marginTop: -30, // Slight overlap for "wrapping" feel
+        marginTop: -30,
         paddingHorizontal: 25,
-        paddingTop: 10, // Adjusted for ScrollView
+        paddingTop: 10,
         paddingBottom: 20,
     },
     scrollContent: {
@@ -381,7 +413,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     footerContainer: {
-        backgroundColor: '#121212',
+        backgroundColor: '#F0C4CB', // 30% Blush
         paddingBottom: 30,
     },
     titleRow: {
@@ -395,7 +427,7 @@ const styles = StyleSheet.create({
     foodName: {
         fontSize: 26,
         fontWeight: '800',
-        color: '#FFF',
+        color: '#4A2C35', // Heading Mauve
         marginBottom: 4,
     },
     priceContainer: {
@@ -404,16 +436,16 @@ const styles = StyleSheet.create({
     },
     fromLabel: {
         fontSize: 15,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         fontWeight: '500',
     },
     priceValue: {
         fontSize: 15,
-        color: '#FF5800',
+        color: '#C87D87', // Antique Rose
         fontWeight: '700',
     },
     stockStatusText: {
-        marginTop: 8,
+        marginLeft: 8,
         fontSize: 13,
         fontWeight: '600',
     },
@@ -431,11 +463,11 @@ const styles = StyleSheet.create({
     descriptionHeader: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#FFF',
+        color: '#4A2C35', // Heading Mauve
         marginBottom: 8,
     },
     modalDescription: {
-        color: '#A0A0A0',
+        color: '#7A5560', // Body Mauve
         fontSize: 14,
         lineHeight: 22,
         textAlign: 'left',
@@ -444,7 +476,7 @@ const styles = StyleSheet.create({
         marginTop: 4,
     },
     seeMoreText: {
-        color: '#FF5800',
+        color: '#C87D87', // Antique Rose
         fontSize: 13,
         fontWeight: '600',
     },
@@ -453,15 +485,16 @@ const styles = StyleSheet.create({
         width: '100%',
         borderStyle: 'dashed',
         borderWidth: 1,
-        borderColor: '#333',
+        borderColor: '#C87D87', // Antique Rose
         marginBottom: 20,
         borderRadius: 1,
+        opacity: 0.3,
     },
     favCircle: {
         width: 50,
         height: 50,
         borderRadius: 25,
-        backgroundColor: 'rgba(255,255,255,0.05)',
+        backgroundColor: 'rgba(200, 125, 135, 0.1)', // Antique Rose with low opacity
         justifyContent: 'center',
         alignItems: 'center',
         marginLeft: 15,
@@ -477,7 +510,7 @@ const styles = StyleSheet.create({
     qtyPill: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#1A1A1A',
+        backgroundColor: '#FBEAD6', // Champagne
         borderRadius: 30,
         padding: 5,
     },
@@ -485,8 +518,8 @@ const styles = StyleSheet.create({
         width: 42,
         height: 42,
         borderRadius: 21,
-        borderWidth: 1,
-        borderColor: '#333',
+        borderWidth: 1.5,
+        borderColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -494,25 +527,25 @@ const styles = StyleSheet.create({
         width: 42,
         height: 42,
         borderRadius: 21,
-        backgroundColor: '#D94F3D',
+        backgroundColor: '#C87D87', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
     },
     qtyValue: {
         fontSize: 17,
         fontWeight: '700',
-        color: '#FFF',
+        color: '#4A2C35', // Mauve
         marginHorizontal: 12,
     },
     atcActionBtn: {
-        backgroundColor: '#FF5800',
+        backgroundColor: '#C87D87', // Antique Rose
         paddingHorizontal: 35,
         paddingVertical: 18,
         borderRadius: 30,
         flex: 1,
         marginLeft: 15,
         alignItems: 'center',
-        shadowColor: '#FF5800',
+        shadowColor: '#C87D87',
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
         shadowRadius: 10,
@@ -524,8 +557,42 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     atcBtnText: {
-        color: '#FFF',
+        color: '#FBEAD6', // Champagne
         fontSize: 18,
         fontWeight: '700',
+    },
+    // Availability Styles
+    availabilityBadge: {
+        position: 'absolute',
+        bottom: 20,
+        left: 20,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 12,
+        zIndex: 10,
+    },
+    badgeGreen: {
+        backgroundColor: 'rgba(76, 175, 80, 0.9)',
+    },
+    badgeYellow: {
+        backgroundColor: 'rgba(245, 158, 11, 0.9)',
+    },
+    badgeRed: {
+        backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    },
+    availabilityText: {
+        color: '#FFF',
+        fontSize: 10,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+    },
+    unavailableBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+        marginTop: 8,
     },
 });

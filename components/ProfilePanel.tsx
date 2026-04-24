@@ -29,11 +29,11 @@ const MenuRow = ({ iconProvider: IconProvider, iconName, title, onPress, theme, 
     <TouchableOpacity style={styles.menuRow} onPress={onPress} activeOpacity={0.7}>
         <View style={styles.menuLeft}>
             <View style={styles.iconContainer}>
-                <IconProvider name={iconName} size={20} color="#2C2C2C" />
+                <IconProvider name={iconName} size={20} color="#C87D87" />
             </View>
-            <Text style={[styles.menuText, { color: '#2C2C2C' }]}>{title}</Text>
+            <Text style={[styles.menuText, { color: '#4A2C35' }]}>{title}</Text>
         </View>
-        <Feather name={rightIcon || "chevron-right"} size={20} color="#C4C4C4" />
+        <Feather name={rightIcon || "chevron-right"} size={20} color="#7A5560" />
     </TouchableOpacity>
 );
 
@@ -243,9 +243,9 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                         </View>
                     </View>
                     {isLoadingProfile ? (
-                        <ActivityIndicator size="small" color="#FF5800" style={{ marginBottom: 8 }} />
+                        <ActivityIndicator size="small" color="#C87D87" style={{ marginBottom: 8 }} />
                     ) : null}
-                    <Text style={[styles.name, { color: '#2C2C2C' }]}>{displayName}</Text>
+                    <Text style={[styles.name, { color: '#4A2C35' }]}>{displayName}</Text>
                     <Text style={styles.email}>{displayEmail}</Text>
                 </View>
 
@@ -269,8 +269,8 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                         <View style={styles.submenuContainer}>
                             <TouchableOpacity style={styles.submenuRow} onPress={openChangePwdSheet} activeOpacity={0.7}>
                                 <View style={styles.submenuLeft}>
-                                    <Feather name="lock" size={18} color="#2C2C2C" />
-                                    <Text style={[styles.submenuText, { color: '#2C2C2C' }]}>Change Password</Text>
+                                    <Feather name="lock" size={18} color="#4A2C35" />
+                                    <Text style={[styles.submenuText, { color: '#4A2C35' }]}>Change Password</Text>
                                 </View>
                                 <Feather name="chevron-right" size={18} color="#C4C4C4" />
                             </TouchableOpacity>
@@ -338,7 +338,7 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             ]}
                         >
                             <View style={styles.logoutIconCircle}>
-                                <Feather name="log-out" size={28} color="#D94F3D" />
+                                <Feather name="log-out" size={28} color="#C87D87" />
                             </View>
                             <Text style={styles.logoutTitle}>Logout Session?</Text>
                             <Text style={styles.logoutSubtitle}>
@@ -486,7 +486,7 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             ]}
                         >
                             <View style={[styles.logoutIconCircle, { backgroundColor: '#FEE2E2' }]}>
-                                <Feather name="mail" size={28} color="#DC2626" />
+                                <Feather name="mail" size={28} color="#C87D87" />
                             </View>
                             <Text style={styles.logoutTitle}>Verify to Delete</Text>
                             <Text style={styles.logoutSubtitle}>
@@ -570,7 +570,7 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             ]}
                         >
                             <View style={[styles.logoutIconCircle, { backgroundColor: '#FFF0E6' }]}>
-                                <Feather name="lock" size={28} color="#FF5800" />
+                                <Feather name="lock" size={28} color="#C87D87" />
                             </View>
                             <Text style={styles.logoutTitle}>Change Password</Text>
 
@@ -643,13 +643,13 @@ const styles = StyleSheet.create({
         width: 100,
         height: 100,
         borderRadius: 50,
-        backgroundColor: '#FDDAD8',
+        backgroundColor: '#F0C4CB', // Blush
     },
     badgeContainer: {
         position: 'absolute',
         bottom: 4,
         right: 4,
-        backgroundColor: '#FF5800',
+        backgroundColor: '#C87D87', // Antique Rose
         borderRadius: 12,
         width: 22,
         height: 22,
@@ -665,7 +665,7 @@ const styles = StyleSheet.create({
     },
     email: {
         fontSize: 14,
-        color: '#888888',
+        color: '#7A5560', // Body Mauve
     },
     menuList: {
         paddingHorizontal: 20,
@@ -674,11 +674,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#F0C4CB', // Blush
         padding: 16,
         marginBottom: 12,
         borderRadius: 16,
-        shadowColor: '#000',
+        shadowColor: '#C87D87',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.04,
         shadowRadius: 8,
@@ -696,7 +696,7 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     submenuContainer: {
-        backgroundColor: '#F3F4F6', // Subtle background for accordion
+        backgroundColor: '#FBEAD6', // Champagne for accordion
         borderRadius: 16,
         paddingVertical: 4,
         paddingHorizontal: 16,
@@ -709,7 +709,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#E5E7EB',
+        borderBottomColor: '#F0C4CB', // Blush
     },
     submenuLeft: {
         flexDirection: 'row',
@@ -726,14 +726,14 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     modalInput: {
-        backgroundColor: '#F9FAFB',
+        backgroundColor: '#F0C4CB', // Blush
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 14,
         fontSize: 15,
-        color: '#1F2937',
+        color: '#4A2C35', // Mauve
         borderWidth: 1,
-        borderColor: '#E5E7EB',
+        borderColor: '#C87D87',
     },
     modalBackdrop: {
         flex: 1,
@@ -747,11 +747,11 @@ const styles = StyleSheet.create({
     },
     logoutModalCard: {
         width: '100%',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#FBEAD6', // Champagne
         borderRadius: 24,
         padding: 24,
         alignItems: 'center',
-        shadowColor: '#000',
+        shadowColor: '#C87D87',
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.1,
         shadowRadius: 20,
@@ -761,7 +761,7 @@ const styles = StyleSheet.create({
         width: 60,
         height: 60,
         borderRadius: 30,
-        backgroundColor: '#FDDAD8',
+        backgroundColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
@@ -769,12 +769,12 @@ const styles = StyleSheet.create({
     logoutTitle: {
         fontSize: 20,
         fontWeight: '700',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Heading Mauve
         marginBottom: 8,
     },
     logoutSubtitle: {
         fontSize: 14,
-        color: '#8A8A8A',
+        color: '#7A5560', // Body Mauve
         textAlign: 'center',
         marginBottom: 24,
         lineHeight: 20,
@@ -787,14 +787,14 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 50,
         borderRadius: 14,
-        backgroundColor: '#F8F9FB',
+        backgroundColor: '#F0C4CB', // Blush
         justifyContent: 'center',
         alignItems: 'center',
     },
     logoutCancelText: {
         fontSize: 15,
         fontWeight: '600',
-        color: '#2C2C2C',
+        color: '#4A2C35', // Mauve
     },
     logoutConfirmButton: {
         flex: 1,

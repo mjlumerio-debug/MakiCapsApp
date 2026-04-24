@@ -22,14 +22,14 @@ const CategoryIcon = memo(function CategoryIcon({ cat, isActive }: { cat: Catego
     );
   }
 
-  return <Feather name="tag" size={14} color={isActive ? "#D94F3D" : "#8A8A8A"} />;
+  return <Feather name="tag" size={18} color={isActive ? "#C87D87" : "#7A5560"} />;
 });
 
 const styles = StyleSheet.create({
   categoryImage: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: '100%',
+    height: '100%',
+    borderRadius: 12,
   },
 });
 

@@ -2,7 +2,8 @@ import { Feather, FontAwesome } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import React, { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { type Food } from '@/lib/menu_store';
+import { formatPeso, resolveProductImage, type Food } from '@/lib/menu_store';
+import { type CatalogMode } from '@/state/reducers/branchReducer';
 
 type FoodCardProps = {
   item: Food;
@@ -12,6 +13,7 @@ type FoodCardProps = {
   onAddToCart: (item: Food) => void;
   onPress: (item: Food) => void;
   isOpen: boolean;
+  catalogMode: CatalogMode;
 };
 
 const FoodCard = memo(function FoodCard({
@@ -22,10 +24,16 @@ const FoodCard = memo(function FoodCard({
   onAddToCart,
   onPress,
   isOpen,
+  catalogMode,
 }: FoodCardProps) {
+  const isGlobalMode = catalogMode === 'global';
   const stockCount = Number(item.stock ?? 0);
   const isAvailableAtBranch = item.is_available;
-  const isAvailable = isOpen && stockCount > 0 && isAvailableAtBranch;
+  const isAvailable = !isGlobalMode && isOpen && stockCount > 0 && isAvailableAtBranch;
+
+  // 🍱 UI FORMATTING (Formatting only at the UI layer)
+  const displayPrice = formatPeso(item.selling_price);
+  const displayImage = resolveProductImage(item.image_path);
 
   return (
     <TouchableOpacity
@@ -33,47 +41,53 @@ const FoodCard = memo(function FoodCard({
       style={[styles.foodCard, { width }]}
       onPress={() => onPress(item)}
     >
-      <View style={[styles.foodCardBody, !isAvailable && { opacity: 0.7 }]}>
-        <View style={[styles.foodImageWrap, !item.image && { backgroundColor: '#F3ECE0', justifyContent: 'center', alignItems: 'center' }]}>
-          {item.image ? (
-            <Image
-              source={item.image as any}
-              style={styles.foodImage}
-              contentFit="cover"
-              transition={200}
-            />
-          ) : (
-            <Feather name="image" size={24} color="#DCCDBE" />
-          )}
-        </View>
+      <View style={[styles.foodImageWrap, !displayImage && { backgroundColor: '#FBEAD6', justifyContent: 'center', alignItems: 'center' }]}>
+        {displayImage ? (
+          <Image
+            source={{ uri: displayImage }}
+            style={styles.foodImage}
+            contentFit="cover"
+            transition={200}
+          />
+        ) : (
+          <Feather name="image" size={24} color="#C87D87" />
+        )}
 
+        {/* Global Mode Badge */}
+        {isGlobalMode && (
+          <View style={styles.browseBadge}>
+            <Text style={styles.browseText}>Catalog</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={[styles.foodCardBody, (!isAvailable && !isGlobalMode) && { opacity: 0.7 }]}>
         <Text style={styles.foodTitle} numberOfLines={1}>
-          {item.title}
+          {item.name}
         </Text>
-        <Text style={styles.priceBelowTitle}>{item.price}</Text>
+        <Text style={styles.priceText}>{displayPrice}</Text>
 
-        {item.description ? (
+        <View style={styles.descriptionArea}>
           <Text style={styles.foodDescription} numberOfLines={2}>
-            {item.description.split(' ').slice(0, 7).join(' ')}
-            {item.description.split(' ').length > 7 ? '...' : ''}
+            {item.description || ""}
           </Text>
-        ) : null}
+        </View>
         
-        {!isAvailable ? (
-          <Text style={[styles.stockText, styles.stockTextUnavailable]}>
-            {!isAvailableAtBranch ? 'Unavailable at branch' : (!isOpen ? 'Branch Closed' : 'Out of Stock')}
-          </Text>
-        ) : null}
-
         <View style={styles.foodBottomRow}>
-          <TouchableOpacity
-            activeOpacity={isAvailable ? 0.8 : 1}
-            style={[styles.addIconButton, !isAvailable && styles.addIconButtonDisabled]}
-            onPress={() => isAvailable ? onAddToCart(item) : null}
-            disabled={!isAvailable}
-          >
-            <Feather name="plus" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
+          {isGlobalMode ? (
+            <View style={styles.viewIcon}>
+               <Feather name="eye" size={18} color="#C87D87" />
+            </View>
+          ) : (
+            <TouchableOpacity
+              activeOpacity={isAvailable ? 0.8 : 1}
+              style={[styles.addIconButton, !isAvailable && styles.addIconButtonDisabled]}
+              onPress={() => isAvailable ? onAddToCart(item) : null}
+              disabled={!isAvailable}
+            >
+              <Feather name="plus" size={20} color="#FBEAD6" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -85,7 +99,7 @@ const FoodCard = memo(function FoodCard({
         <FontAwesome
           name={isFavorite ? 'heart' : 'heart-o'}
           size={16}
-          color={isFavorite ? '#D94F3D' : '#8A8A8A'}
+          color={isFavorite ? '#C87D87' : '#7A5560'}
         />
       </TouchableOpacity>
     </TouchableOpacity>
@@ -94,12 +108,12 @@ const FoodCard = memo(function FoodCard({
 
 const styles = StyleSheet.create({
   foodCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0C4CB', // 30% Blush
     borderRadius: 24,
     marginBottom: 16,
-    shadowColor: '#000',
+    shadowColor: '#C87D87',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 3,
     overflow: 'hidden',
@@ -109,11 +123,11 @@ const styles = StyleSheet.create({
   },
   foodImageWrap: {
     width: '100%',
-    aspectRatio: 1,
+    aspectRatio: 1.1,
     borderRadius: 18,
-    marginBottom: 12,
+    marginBottom: 4,
     overflow: 'hidden',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FBEAD6', // 60% Champagne
   },
   foodImage: {
     width: '100%',
@@ -122,24 +136,27 @@ const styles = StyleSheet.create({
   foodTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#1A1A1A',
+    color: '#4A2C35', // Heading Mauve
     marginBottom: 2,
-    fontFamily: 'Outfit_700Bold',
+    fontFamily: 'Outfit-Bold',
   },
-  priceBelowTitle: {
+  priceText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#D94F3D',
+    color: '#C87D87', // Antique Rose
     marginBottom: 6,
-    fontFamily: 'Outfit_600SemiBold',
+    fontFamily: 'Outfit-Regular',
   },
   foodDescription: {
     fontSize: 11,
-    color: '#8A8A8A',
+    color: '#7A5560', // Body Mauve
     lineHeight: 15,
-    marginBottom: 8,
-    fontFamily: 'Outfit_400Regular',
-  },
+    fontFamily: 'Outfit-Regular',
+},
+descriptionArea: {
+    height: 38,
+    justifyContent: 'flex-start',
+},
   foodBottomRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -150,39 +167,51 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 12,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#C87D87', // Antique Rose
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
   },
   addIconButtonDisabled: {
     backgroundColor: '#E0E0E0',
   },
+  viewIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: '#FBEAD6', // Champagne
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   heartButton: {
     position: 'absolute',
-    top: 20,
-    right: 20,
+    top: 15,
+    right: 15,
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: 'rgba(251, 234, 214, 0.9)', // Champagne
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: '#C87D87',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 4,
+    zIndex: 5,
   },
-  stockText: {
-    fontSize: 10,
-    fontWeight: '600',
-    marginBottom: 4,
+  browseBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
-  stockTextUnavailable: {
-    color: '#D94F3D',
+  browseText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
 });
 
