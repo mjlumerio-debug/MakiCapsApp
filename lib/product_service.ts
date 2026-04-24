@@ -27,8 +27,8 @@ const mapProduct = (p: any): DisplayProduct => ({
     id: String(p.id),
     branch_id: Number(p.branch_id || 0),
     name: p.name || 'Unnamed Product',
-    selling_price: Number(p.selling_price || 0),
-    image_path: p.image_path || '',
+    selling_price: Number(p.selling_price || p.price || 0),
+    image_path: p.image || p.image_path || '',
     category_id_: Number(p.category_id_ || p.category_id || 0),
     description: p.description || '',
     is_available: p.is_available !== false && p.is_available !== 0,
@@ -56,7 +56,7 @@ const extractCategories = (data: any): any[] => {
     return list.map((c: any) => ({
         id: String(c.id || ''),
         name: c.name || 'Category',
-        image_path: c.image_path || c.image || c.icon || ''
+        image_path: c.image_url || c.image_path || c.image || c.icon || ''
     })).filter((c: any) => c.id);
 };
 

@@ -138,6 +138,8 @@ export const validateCartStock = async (
     };
   } catch (error: any) {
     console.log('[OrderAPI] validateCartStock failed:', error?.response?.data || error?.message);
-    throw new Error('Maximum available quantity reached');
+    // Surface the real backend message so the user knows what's wrong
+    const serverMsg = error?.response?.data?.message || error?.response?.data?.error;
+    throw new Error(serverMsg || 'Some items in your cart exceed available stock. Please adjust quantities.');
   }
 };

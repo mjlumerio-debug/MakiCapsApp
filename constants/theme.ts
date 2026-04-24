@@ -5,38 +5,38 @@ const tintColorDark = '#FF4D4D';
 
 export const Colors = {
   light: {
-    background: '#FBEAD6', // 60% Champagne
-    surface: '#F0C4CB',    // 30% Blush
-    primary: '#C87D87',    // 10% Antique Rose
-    tint: '#C87D87',
-    secondary: '#F0C4CB',
-    text: '#7A5560',       // Body Mauve
-    heading: '#4A2C35',    // Heading Mauve
-    icon: '#C87D87',
-    tabIconDefault: '#7A5560',
-    tabIconSelected: '#C87D87',
-    border: '#F0C4CB',
-    gray: '#F0C4CB',
-    white: '#FBEAD6',      // Champagne instead of white
-    black: '#4A2C35',      // Mauve instead of black
-    shadow: 'rgba(200, 125, 135, 0.15)',
+    background: '#FFFFFF', // 60% White
+    surface: '#F8F8F8',    // 30% Off-white
+    primary: '#D38C9D',    // Cherry Soda Pink
+    tint: '#D38C9D',
+    secondary: '#F8F8F8',
+    text: '#4A4A4A',       // Dark Gray
+    heading: '#000000',    // Black
+    icon: '#D38C9D',
+    tabIconDefault: '#A1A1A1',
+    tabIconSelected: '#D38C9D',
+    border: '#EEEEEE',
+    gray: '#A1A1A1',
+    white: '#FFFFFF',
+    black: '#000000',
+    shadow: 'rgba(211, 140, 157, 0.1)',
   },
   dark: {
-    background: '#4A2C35', // Dark Mauve
-    surface: '#7A5560',
-    primary: '#C87D87',
-    tint: '#C87D87',
-    secondary: '#F0C4CB',
-    text: '#FBEAD6',       // Champagne
-    heading: '#FBEAD6',
-    icon: '#C87D87',
-    tabIconDefault: '#F0C4CB',
-    tabIconSelected: '#C87D87',
-    border: '#7A5560',
-    gray: '#7A5560',
-    white: '#FBEAD6',
-    black: '#4A2C35',
-    shadow: 'rgba(0, 0, 0, 0.25)',
+    background: '#000000', // 60% Black
+    surface: '#1A1A1A',    // 30% Dark Gray
+    primary: '#B90504',    // 10% Red
+    tint: '#B90504',
+    secondary: '#1A1A1A',
+    text: '#E0E0E0',       // Light Gray
+    heading: '#FFFFFF',    // White
+    icon: '#B90504',
+    tabIconDefault: '#555555',
+    tabIconSelected: '#B90504',
+    border: '#333333',
+    gray: '#555555',
+    white: '#FFFFFF',
+    black: '#000000',
+    shadow: 'rgba(185, 5, 4, 0.2)',
   },
 };
 

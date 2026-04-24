@@ -1,6 +1,7 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { memo, useEffect, useRef } from 'react';
 import { Animated as RNAnimated, Easing as RNEasing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 
 export type NavTab = 'home' | 'stores' | 'heart' | 'shopping-cart' | 'user';
 
@@ -21,6 +22,7 @@ const BottomNav = memo(function BottomNav({
   favoritesCount,
   cartCount,
 }: BottomNavProps) {
+  const { colors } = useAppTheme();
   const tabAnimations = useRef<Record<NavTab, RNAnimated.Value>>({
     home: new RNAnimated.Value(activeTab === 'home' ? 1 : 0),
     stores: new RNAnimated.Value(activeTab === 'stores' ? 1 : 0),
@@ -43,7 +45,15 @@ const BottomNav = memo(function BottomNav({
   }, [activeTab]);
 
   return (
-    <View style={[styles.bottomNav, { bottom: navBottomOffset }]}>
+    <View style={[
+      styles.bottomNav, 
+      { 
+        bottom: navBottomOffset, 
+        backgroundColor: colors.surface + 'F2', // ~95% opacity
+        borderColor: colors.primary + '4D', // ~30% opacity
+        shadowColor: colors.primary 
+      }
+    ]}>
       {navTabs.map((tab) => {
         const activeProgress = tabAnimations.current[tab];
         const inactiveProgress = activeProgress.interpolate({
@@ -69,13 +79,14 @@ const BottomNav = memo(function BottomNav({
                 {
                   opacity: activeProgress,
                   transform: [{ scale: activeScale }],
+                  backgroundColor: colors.primary,
                 },
               ]}
             />
             <View style={styles.navIconWrap}>
               <RNAnimated.View style={[styles.navIconLayer, { opacity: inactiveProgress }]}>
                 {tab === 'stores' ? (
-                  <MaterialCommunityIcons name="store" size={20} color="#7A5560" />
+                  <MaterialCommunityIcons name="store" size={20} color={colors.text} />
                 ) : (
                   <Feather
                     name={
@@ -84,13 +95,13 @@ const BottomNav = memo(function BottomNav({
                           tab as any
                     }
                     size={18}
-                    color="#7A5560"
+                    color={colors.text}
                   />
                 )}
               </RNAnimated.View>
               <RNAnimated.View style={[styles.navIconLayer, { opacity: activeProgress }]}>
                 {tab === 'stores' ? (
-                  <MaterialCommunityIcons name="store" size={20} color="#FBEAD6" />
+                  <MaterialCommunityIcons name="store" size={20} color={colors.background} />
                 ) : (
                   <Feather
                     name={
@@ -99,23 +110,23 @@ const BottomNav = memo(function BottomNav({
                           tab as any
                     }
                     size={18}
-                    color="#FBEAD6"
+                    color={colors.background}
                   />
                 )}
               </RNAnimated.View>
             </View>
 
             {tab === 'heart' && favoritesCount > 0 && (
-              <View style={styles.navBadge}>
-                <Text style={styles.navBadgeText} numberOfLines={1}>
+              <View style={[styles.navBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
+                <Text style={[styles.navBadgeText, { color: colors.background }]} numberOfLines={1}>
                   {favoritesCount > 99 ? '99+' : favoritesCount}
                 </Text>
               </View>
             )}
 
             {tab === 'shopping-cart' && cartCount > 0 && (
-              <View style={styles.navBadge}>
-                <Text style={styles.navBadgeText} numberOfLines={1}>
+              <View style={[styles.navBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
+                <Text style={[styles.navBadgeText, { color: colors.background }]} numberOfLines={1}>
                   {cartCount > 99 ? '99+' : cartCount}
                 </Text>
               </View>
@@ -139,7 +150,7 @@ const styles = StyleSheet.create({
     width: 310,
     justifyContent: 'space-between',
     alignItems: 'center',
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.15,
     shadowRadius: 20,
@@ -156,7 +167,7 @@ const styles = StyleSheet.create({
   },
   navTabActiveBg: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#C87D87', // Antique Rose
+    backgroundColor: '#D38C9D', // Antique Rose
     borderRadius: 22,
   },
   navIconWrap: {
@@ -174,7 +185,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    backgroundColor: '#C87D87', // Antique Rose
+    backgroundColor: '#D38C9D', // Antique Rose
     minWidth: 18,
     height: 18,
     borderRadius: 9,
@@ -192,3 +203,4 @@ const styles = StyleSheet.create({
 });
 
 export default BottomNav;
+

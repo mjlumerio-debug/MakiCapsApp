@@ -15,9 +15,11 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { fetchOrderStatus, type OrderStatusResponse } from '../lib/order_api';
 import { useUiStore, updateOrderStatus } from '../lib/ui_store';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 
 const { width } = Dimensions.get('window');
 const PRIMARY_ORANGE = '#FF5800';
@@ -79,13 +81,15 @@ function PulseDot() {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
-        Animated.loop(
+        const animation = Animated.loop(
             Animated.sequence([
                 Animated.timing(pulseAnim, { toValue: 1.6, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
                 Animated.timing(pulseAnim, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
             ])
-        ).start();
-    }, []);
+        );
+        animation.start();
+        return () => animation.stop();
+    }, [pulseAnim]);
 
     return (
         <Animated.View style={[styles.pulseDot, { transform: [{ scale: pulseAnim }], opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.6, 0] }) }]} />
@@ -99,11 +103,13 @@ function DeliveredCelebration({ onDismiss }: { onDismiss: () => void }) {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
-        Animated.parallel([
+        const animation = Animated.parallel([
             Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 80, useNativeDriver: true }),
             Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
-        ]).start();
-    }, []);
+        ]);
+        animation.start();
+        return () => animation.stop();
+    }, [fadeAnim, scaleAnim]);
 
     return (
         <Animated.View style={[styles.celebrationOverlay, { opacity: fadeAnim }]}>
@@ -137,6 +143,8 @@ export default function TrackOrderScreen() {
     const totalPrice = params.totalPrice || '₱0.00';
 
     const { orders, addresses, activeAddressId } = useUiStore();
+    const insets = useSafeAreaInsets();
+    const { colors, isDark } = useAppTheme();
 
     // Find the local order record for extra details
     const localOrder = orders.find(o => o.orderId === orderId || o.backendOrderId === backendOrderId);
@@ -160,13 +168,15 @@ export default function TrackOrderScreen() {
     // ── Entrance animation ──
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
-        Animated.timing(headerFadeAnim, {
+        const animation = Animated.timing(headerFadeAnim, {
             toValue: 1,
             duration: 500,
             easing: Easing.out(Easing.quad),
             useNativeDriver: true,
-        }).start();
-    }, []);
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [headerFadeAnim]);
 
     // ── Animate progress bar ──
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,7 +264,15 @@ export default function TrackOrderScreen() {
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
             {/* ── Header ── */}
-            <Animated.View style={[styles.header, { opacity: headerFadeAnim }]}>
+            <Animated.View style={[
+                styles.header, 
+                { 
+                    opacity: headerFadeAnim, 
+                    backgroundColor: colors.surface, 
+                    borderBottomColor: colors.primary + '1A',
+                    paddingTop: Math.max(insets.top, 16)
+                }
+            ]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.headerBackBtn} activeOpacity={0.7}>
                     <Feather name="chevron-left" size={24} color="#4B5563" />
                 </TouchableOpacity>
@@ -426,8 +444,8 @@ export default function TrackOrderScreen() {
                             <Text style={styles.summaryValue}>{moneyText(localOrder.deliveryFee)}</Text>
                         </View>
                         <View style={[styles.summaryRow, { marginTop: 8 }]}>
-                            <Text style={styles.summaryTotalLabel}>Total</Text>
-                            <Text style={styles.summaryTotalValue}>{moneyText(localOrder.totalPrice || totalPrice)}</Text>
+                            <Text style={[styles.summaryTotalLabel, { color: colors.heading }]}>Total</Text>
+                            <Text style={[styles.summaryTotalValue, { color: colors.primary }]}>{moneyText(localOrder.totalPrice || totalPrice)}</Text>
                         </View>
 
                         {/* Address & Payment */}
@@ -445,7 +463,7 @@ export default function TrackOrderScreen() {
 
                 {/* ── Back to Home Button ── */}
                 <TouchableOpacity
-                    style={styles.homeBtn}
+                    style={[styles.homeBtn, { backgroundColor: colors.primary }]}
                     onPress={() => router.replace('/home_dashboard' as any)}
                     activeOpacity={0.8}
                 >
@@ -483,11 +501,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 12,
         paddingBottom: 16,
-        backgroundColor: '#FFFFFF',
         borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
     },
     headerBackBtn: {
         width: 42,

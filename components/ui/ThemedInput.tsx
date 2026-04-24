@@ -1,5 +1,5 @@
 import { Colors, Typography } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import {
@@ -44,8 +44,7 @@ export function ThemedInput({
     iconName,
     height = 56
 }: ThemedInputProps) {
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors: theme } = useAppTheme();
     const [showPassword, setShowPassword] = useState(false);
 
     const focusAnim = useSharedValue(0);

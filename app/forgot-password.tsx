@@ -1,7 +1,7 @@
 import { ThemedButton } from '@/components/ui/ThemedButton';
 import { ThemedInput } from '@/components/ui/ThemedInput';
 import { Colors, Typography } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import api from '@/lib/api';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -24,8 +24,7 @@ const BACKGROUND_IMAGE = 'C:\\Users\\Mark\\.gemini\\antigravity\\brain\\83ea3caa
 
 export default function ForgotPasswordScreen() {
     const router = useRouter();
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors, isDark } = useAppTheme();
     const [email, setEmail] = useState('');
     const [step, setStep] = useState<'email' | 'otp' | 'reset'>('email');
     const [otp, setOtp] = useState('');
@@ -177,7 +176,7 @@ export default function ForgotPasswordScreen() {
                 style={StyleSheet.absoluteFillObject}
                 blurRadius={2}
             />
-            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(255, 255, 255, 0.4)' }]} />
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.5)' }]} />
 
             <SafeAreaView style={{ flex: 1 }}>
                 <KeyboardAvoidingView
@@ -200,17 +199,17 @@ export default function ForgotPasswordScreen() {
                                 }}
                                 style={styles.backButton}
                             >
-                                <Animated.View style={[animatedBackStyle, styles.backButtonInner, { backgroundColor: 'rgba(255, 255, 255, 0.8)' }]}>
-                                    <Ionicons name="chevron-back" size={24} color={theme.tint} />
+                                <Animated.View style={[animatedBackStyle, styles.backButtonInner, { backgroundColor: colors.surface }]}>
+                                    <Ionicons name="chevron-back" size={24} color={colors.primary} />
                                 </Animated.View>
                             </TouchableOpacity>
 
                             <View style={styles.centerSection}>
                                 <Animated.View 
-                                    entering={FadeInDown.duration(800).springify()}
-                                    style={[styles.glassCard, { backgroundColor: 'rgba(255, 255, 255, 0.9)' }]}
+                                    entering={FadeInDown.duration(800)}
+                                    style={[styles.glassCard, { backgroundColor: colors.surface, shadowColor: colors.primary }]}
                                 >
-                                    <View style={styles.imageContainer}>
+                                    <View style={[styles.imageContainer, { backgroundColor: colors.background }]}>
                                         <Image
                                             source={require('../assets/images/chef_forgot.png')}
                                             style={styles.chefImage}
@@ -218,10 +217,10 @@ export default function ForgotPasswordScreen() {
                                         />
                                     </View>
 
-                                    <Text style={[styles.title, { color: '#2D3436' }]}>
+                                    <Text style={[styles.title, { color: colors.heading }]}>
                                         Lost your path?
                                     </Text>
-                                    <Text style={[styles.subtitle, { color: '#636E72' }]}>
+                                    <Text style={[styles.subtitle, { color: colors.text }]}>
                                         Oto-San is ready to help you find your way back to the kitchen.
                                     </Text>
 
@@ -302,19 +301,19 @@ export default function ForgotPasswordScreen() {
                                             }
                                             loading={isSubmitting}
                                             disabled={isSubmitting}
-                                            style={styles.resetButton}
+                                            style={[styles.resetButton, { shadowColor: colors.primary }]}
                                         />
                                         {step === 'otp' ? (
                                             <TouchableOpacity onPress={handleResendOtp} disabled={isSubmitting} style={styles.resendButton}>
-                                                <Text style={[styles.resendText, { color: theme.tint }]}>Resend OTP</Text>
+                                                <Text style={[styles.resendText, { color: colors.primary }]}>Resend OTP</Text>
                                             </TouchableOpacity>
                                         ) : null}
                                     </View>
 
                                     <View style={styles.returnLink}>
-                                        <Text style={styles.returnText}>Wait, I remember now! </Text>
+                                        <Text style={[styles.returnText, { color: colors.text }]}>Wait, I remember now! </Text>
                                         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
-                                            <Text style={[styles.returnBold, { color: theme.tint }]}>Go back</Text>
+                                            <Text style={[styles.returnBold, { color: colors.primary }]}>Go back</Text>
                                         </TouchableOpacity>
                                     </View>
                                 </Animated.View>
@@ -330,7 +329,6 @@ export default function ForgotPasswordScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F1E3',
     },
     mainContent: {
         flex: 1,
@@ -403,16 +401,13 @@ const styles = StyleSheet.create({
         width: '100%',
     },
     input: {
-        backgroundColor: '#F9FAFB',
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#F1F2F6',
         marginBottom: 8,
     },
     resetButton: {
         height: 58,
         borderRadius: 18,
-        shadowColor: '#D82E3F',
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
         shadowRadius: 12,

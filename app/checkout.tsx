@@ -9,19 +9,19 @@ import {
     Platform,
     SafeAreaView,
     ScrollView,
-    StatusBar,
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
+    View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, {
     Easing,
     useAnimatedStyle,
     withTiming
 } from 'react-native-reanimated';
-import { useMenuStore } from '../lib/menu_store';
+import { useMenuStore, resolveProductImage } from '../lib/menu_store';
 import { addOrder, formatAddressForDisplay, Order, useUiStore } from '../lib/ui_store';
 import { useLocation } from '@/state/contexts/LocationContext';
 import { useBranch } from '@/state/contexts/BranchContext';
@@ -30,6 +30,8 @@ import { getDistanceKm } from '../lib/google_location';
 import { submitOrder, validateCartStock, type OrderPayload } from '../lib/order_api';
 import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
 import * as Haptics from 'expo-haptics';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { StatusBar } from 'expo-status-bar';
 
 const { height } = Dimensions.get('window');
 const DELIVERY_FEE = 38.00;
@@ -49,6 +51,8 @@ export default function CheckoutScreen() {
     const router = useRouter();
     const params = useLocalSearchParams();
     const { menuItems: storeItems } = useMenuStore();
+    const insets = useSafeAreaInsets();
+    const { colors, isDark } = useAppTheme();
 
     // 1. Parse Cart Items from Params and Resolve from Store
     const initialCart: CheckoutItem[] = useMemo(() => {
@@ -57,13 +61,28 @@ export default function CheckoutScreen() {
                 const sparseCart = JSON.parse(params.cart as string);
                 // Resolve full details from store
                 return sparseCart.map((item: any) => {
-                    const storeItem = storeItems.find(s => s.id === item.id);
+                    const storeItem = storeItems.find(s => s.id === String(item.id));
                     if (storeItem) {
-                        return { ...storeItem, quantity: item.quantity };
+                        return { 
+                            ...storeItem, 
+                            id: String(storeItem.id),
+                            title: storeItem.name,
+                            image: resolveProductImage(storeItem.image_path),
+                            price: storeItem.selling_price,
+                            quantity: item.quantity,
+                            stock: storeItem.stock ?? null,
+                            max_quantity: storeItem.stock ?? null,
+                        };
                     }
                     // Fallback to persisted details if not in store
-                    if (item.title && item.price) {
-                        return { ...item, quantity: item.quantity };
+                    if (item.title && (item.price || item.selling_price)) {
+                        return { 
+                            ...item, 
+                            id: String(item.id),
+                            image: resolveProductImage(item.image_path || item.image),
+                            price: item.selling_price || item.price,
+                            quantity: item.quantity 
+                        };
                     }
                     return null;
                 }).filter(Boolean);
@@ -102,12 +121,45 @@ export default function CheckoutScreen() {
 
     // Load user profile on mount
     React.useEffect(() => {
+        let isMounted = true;
         const loadProfile = async () => {
             const profile = await AsyncStorage.getItem('user_profile');
-            if (profile) setUserProfile(JSON.parse(profile));
+            if (profile && isMounted) setUserProfile(JSON.parse(profile));
         };
         loadProfile();
+        return () => { isMounted = false; };
     }, []);
+
+    // ── Address Serviceability Monitor ──
+    React.useEffect(() => {
+        if (!activeAddress || !selectedBranch) return;
+
+        // 1. Calculate Distance
+        const distance = getDistanceKm(
+            activeAddress.latitude || 0,
+            activeAddress.longitude || 0,
+            selectedBranch.latitude || 0,
+            selectedBranch.longitude || 0
+        );
+
+        // 2. Check if out of range
+        const isOutOfRange = selectedBranch.delivery_radius_km && distance > selectedBranch.delivery_radius_km;
+        
+        if (isOutOfRange) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            Alert.alert(
+                "Outside Delivery Range",
+                `The selected address is outside the delivery range of ${selectedBranch.name}. Please select a different address or branch.`,
+                [
+                    { 
+                        text: "Return to Cart", 
+                        onPress: () => router.replace('/home_dashboard' as any) 
+                    }
+                ],
+                { cancelable: false }
+            );
+        }
+    }, [activeAddress?.id, selectedBranch?.id]);
 
     // 3. Logic Functions
     const paymentCategories = ['Cash on Delivery', 'E-Wallet'];
@@ -123,16 +175,17 @@ export default function CheckoutScreen() {
                     return item;
                 }
                 const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
+                const hasStockLimit = maxQuantity > 0;
                 const requested = Math.max(1, item.quantity + delta);
-                const clamped = Math.min(requested, maxQuantity);
+                const clamped = hasStockLimit ? Math.min(requested, maxQuantity) : requested;
 
-                if (requested > maxQuantity) {
+                if (hasStockLimit && requested > maxQuantity) {
                     Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
                 }
 
                 return {
                     ...item,
-                    quantity: maxQuantity > 0 ? clamped : item.quantity,
+                    quantity: hasStockLimit ? clamped : requested,
                 };
             });
             return next;
@@ -209,11 +262,12 @@ export default function CheckoutScreen() {
 
         const hasExceededLocalStock = menuItems.some((item) => {
             const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
-            return item.quantity > maxQuantity;
+            // Only block if there's a real stock limit and the quantity exceeds it
+            return maxQuantity > 0 && item.quantity > maxQuantity;
         });
 
         if (hasExceededLocalStock) {
-            Alert.alert("Maximum available quantity reached", "Maximum available quantity reached");
+            Alert.alert("Stock Limit Exceeded", "Some items exceed the available stock. Please adjust your quantities.");
             return;
         }
 
@@ -321,53 +375,64 @@ export default function CheckoutScreen() {
 
     // 5. Rendering logic
     const renderMenuItem = ({ item }: { item: CheckoutItem }) => (
-        <View style={styles.itemCard}>
-            <Image source={item.image} style={styles.itemImage} />
+        <View style={[styles.itemCard, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}>
+            <Image 
+                source={typeof item.image === 'string' ? { uri: item.image } : item.image} 
+                style={styles.itemImage} 
+                resizeMode="cover"
+            />
             <View style={styles.itemInfo}>
                 <View style={styles.itemHeader}>
-                    <Text style={styles.itemName} numberOfLines={1}>{item.title}</Text>
+                    <Text style={[styles.itemName, { color: colors.heading }]} numberOfLines={1}>{item.title}</Text>
                     <TouchableOpacity onPress={() => removeItem(item.id)} style={styles.trashBtn}>
                         <Feather name="trash-2" size={16} color="#EF4444" />
                     </TouchableOpacity>
                 </View>
 
-                <Text style={styles.itemPriceSingle}>
-                    {typeof item.price === 'number' ? `₱${item.price.toFixed(2)}` : item.price} / unit
+                <Text style={[styles.itemPriceSingle, { color: colors.text }]}>
+                    ₱{(typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : item.price).toFixed(2)} / unit
                 </Text>
 
                 <View style={styles.cardFooter}>
-                    <View style={styles.stepper}>
+                    <View style={[styles.stepper, { backgroundColor: colors.background }]}>
                         <TouchableOpacity
                             onPress={() => updateQuantity(item.id, -1)}
-                            style={[styles.stepBtn, item.quantity === 1 && styles.stepBtnDisabled]}
+                            style={[styles.stepBtn, { backgroundColor: colors.surface }, item.quantity === 1 && styles.stepBtnDisabled]}
                         >
-                            <Feather name="minus" size={14} color={item.quantity === 1 ? "#D1D5DB" : "#1F2937"} />
+                            <Feather name="minus" size={14} color={item.quantity === 1 ? colors.text + '40' : colors.heading} />
                         </TouchableOpacity>
-                        <Text style={styles.stepValue}>{item.quantity}</Text>
+                        <Text style={[styles.stepValue, { color: colors.heading }]}>{item.quantity}</Text>
                         <TouchableOpacity
                             onPress={() => updateQuantity(item.id, 1)}
-                            style={styles.stepBtn}
+                            style={[styles.stepBtn, { backgroundColor: colors.surface }]}
                         >
-                            <Feather name="plus" size={14} color="#1F2937" />
+                            <Feather name="plus" size={14} color={colors.heading} />
                         </TouchableOpacity>
                     </View>
-                    <Text style={styles.itemTotalPrice}>₱{((typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : item.price) * item.quantity).toFixed(2)}</Text>
+                    <Text style={[styles.itemTotalPrice, { color: colors.primary }]}>₱{((typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : item.price) * item.quantity).toFixed(2)}</Text>
                 </View>
             </View>
         </View>
     );
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={[styles.safeArea, { backgroundColor: colors.background }]}>
+            <StatusBar style={isDark ? 'light' : 'dark'} />
 
-            {/* Header (Scaled down slightly) */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-                    <Feather name="chevron-left" size={22} color="#4B5563" />
+            {/* Header */}
+            <View style={[
+                styles.header, 
+                { 
+                    backgroundColor: colors.surface, 
+                    borderBottomColor: colors.primary + '1A',
+                    paddingTop: Math.max(insets.top, 16)
+                }
+            ]}>
+                <TouchableOpacity onPress={() => router.back()} style={[styles.headerBtn, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}>
+                    <Feather name="chevron-left" size={22} color={colors.heading} />
                 </TouchableOpacity>
                 <View style={styles.headerTitleWrap}>
-                    <Text style={styles.headerTitle}>Checkout Order</Text>
+                    <Text style={[styles.headerTitle, { color: colors.heading }]}>Checkout Order</Text>
                 </View>
                 <View style={styles.headerBtnPlaceholder} />
             </View>
@@ -380,10 +445,11 @@ export default function CheckoutScreen() {
                 ]}
             >
                 {/* Items Section */}
-                <Text style={styles.sectionTitle}>Items ({menuItems.length})</Text>
+                <Text style={[styles.sectionTitle, { color: colors.heading }]}>Items ({menuItems.length})</Text>
                 {menuItems.length > 0 ? (
                     <View style={[
                         styles.itemsContainer,
+                        { backgroundColor: 'transparent' },
                         menuItems.length > 5 && { height: height * 0.45 }
                     ]}>
                         <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
@@ -396,19 +462,19 @@ export default function CheckoutScreen() {
                     </View>
                 ) : (
                     <View style={styles.emptyContainer}>
-                        <MaterialCommunityIcons name="cart-variant" size={48} color="#E5E7EB" />
-                        <Text style={styles.emptyText}>Your order is empty</Text>
-                        <TouchableOpacity onPress={() => router.back()} style={styles.browseBtn}>
-                            <Text style={styles.browseBtnText}>Go back to Menu</Text>
+                        <MaterialCommunityIcons name="cart-variant" size={48} color={colors.primary + '20'} />
+                        <Text style={[styles.emptyText, { color: colors.text }]}>Your order is empty</Text>
+                        <TouchableOpacity onPress={() => router.back()} style={[styles.browseBtn, { backgroundColor: colors.primary + '15' }]}>
+                            <Text style={[styles.browseBtnText, { color: colors.primary }]}>Go back to Menu</Text>
                         </TouchableOpacity>
                     </View>
                 )}
 
                 {/* Address Section */}
                 <View style={styles.sectionHeaderRow}>
-                    <Text style={styles.sectionTitle}>Delivery Address</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.heading }]}>Delivery Address</Text>
                     <TouchableOpacity onPress={() => router.push('/addresses' as any)}>
-                        <Text style={styles.sectionActionText}>Manage</Text>
+                        <Text style={[styles.sectionActionText, { color: colors.primary }]}>Manage</Text>
                     </TouchableOpacity>
                 </View>
                 
@@ -418,45 +484,53 @@ export default function CheckoutScreen() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setShowDeliveryModal(true);
                     }}
-                    style={styles.addressContainer}
+                    style={[styles.addressContainer, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}
                 >
-                    <View style={styles.addressBox}>
+                    <View style={[styles.addressBox, { borderBottomColor: colors.primary + '1A' }]}>
                         <View style={styles.addressLeft}>
-                            <View style={styles.addressIconCircle}>
-                                <Ionicons name="location" size={18} color="#FF5800" />
+                            <View style={[styles.addressIconCircle, { backgroundColor: colors.primary + '15' }]}>
+                                <Ionicons name="location" size={18} color={colors.primary} />
                             </View>
                             <View style={styles.addressContent}>
                                 {activeAddress ? (
                                     <>
-                                        <Text style={styles.addressMainText} numberOfLines={2}>
+                                        <Text style={[styles.addressMainText, { color: colors.heading }]} numberOfLines={2}>
                                             {formattedMainAddress || 'Delivery Address'}
                                         </Text>
-                                        <Text style={styles.addressSubText} numberOfLines={3}>
+                                        <Text style={[styles.addressSubText, { color: colors.text }]} numberOfLines={3}>
                                             {formattedActiveAddress || activeAddress.fullAddress}
                                         </Text>
                                     </>
                                 ) : (
-                                    <Text style={styles.addressMainText}>Choose delivery address</Text>
+                                    <Text style={[styles.addressMainText, { color: colors.heading }]}>Choose delivery address</Text>
                                 )}
                             </View>
                         </View>
                         <View style={styles.editBtn}>
-                            <Feather name="chevron-right" size={20} color="#9CA3AF" />
+                            <Feather name="chevron-right" size={20} color={colors.text} />
                         </View>
                     </View>
                 </TouchableOpacity>
 
                 {/* Payment Method Section */}
-                <Text style={styles.sectionTitle}>Payment Method</Text>
-                <View style={styles.paymentContainer}>
+                <Text style={[styles.sectionTitle, { color: colors.heading }]}>Payment Method</Text>
+                <View style={[styles.paymentContainer, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
                         {paymentCategories.map(cat => (
                             <TouchableOpacity
                                 key={cat}
                                 onPress={() => setSelectedCategory(cat)}
-                                style={[styles.categoryTab, selectedCategory === cat && styles.categoryTabActive]}
+                                style={[
+                                    styles.categoryTab, 
+                                    { backgroundColor: colors.background, borderColor: colors.primary + '1A' },
+                                    selectedCategory === cat && { backgroundColor: colors.primary + '15', borderColor: colors.primary }
+                                ]}
                             >
-                                <Text style={[styles.categoryTabText, selectedCategory === cat && styles.categoryTabTextActive]}>{cat}</Text>
+                                <Text style={[
+                                    styles.categoryTabText, 
+                                    { color: colors.text },
+                                    selectedCategory === cat && { color: colors.primary }
+                                ]}>{cat}</Text>
                             </TouchableOpacity>
                         ))}
                     </ScrollView>
@@ -467,17 +541,17 @@ export default function CheckoutScreen() {
                                 <TouchableOpacity
                                     key={m.id}
                                     onPress={() => setSelectedMethod(m.name)}
-                                    style={styles.methodRow}
+                                    style={[styles.methodRow, { borderBottomColor: colors.background }]}
                                 >
-                                    <View style={[styles.radio, selectedMethod === m.name && styles.radioActive]}>
-                                        {selectedMethod === m.name && <View style={styles.radioInner} />}
+                                    <View style={[styles.radio, { borderColor: colors.text + '40' }, selectedMethod === m.name && { borderColor: colors.primary }]}>
+                                        {selectedMethod === m.name && <View style={[styles.radioInner, { backgroundColor: colors.primary }]} />}
                                     </View>
-                                    <View style={styles.methodIconBox}>
+                                    <View style={[styles.methodIconBox, { backgroundColor: '#FFF' }]}>
                                         <Image source={{ uri: m.icon }} style={styles.methodIcon} resizeMode="contain" />
                                     </View>
                                     <View style={styles.methodInfo}>
-                                        <Text style={styles.methodName}>{m.name}</Text>
-                                        <Text style={styles.methodDesc} numberOfLines={1}>{m.desc}</Text>
+                                        <Text style={[styles.methodName, { color: colors.heading }]}>{m.name}</Text>
+                                        <Text style={[styles.methodDesc, { color: colors.text }]} numberOfLines={1}>{m.desc}</Text>
                                     </View>
                                 </TouchableOpacity>
                             ))}
@@ -488,18 +562,18 @@ export default function CheckoutScreen() {
                         <View style={styles.methodList}>
                             <TouchableOpacity
                                 onPress={() => {}} // Category selection is enough
-                                style={styles.methodRow}
+                                style={[styles.methodRow, { borderBottomColor: 'transparent' }]}
                                 disabled={true}
                             >
-                                <View style={[styles.radio, styles.radioActive]}>
-                                    <View style={styles.radioInner} />
+                                <View style={[styles.radio, { borderColor: colors.primary }]}>
+                                    <View style={[styles.radioInner, { backgroundColor: colors.primary }]} />
                                 </View>
-                                <View style={styles.methodIconBox}>
-                                    <MaterialCommunityIcons name="hand-coin" size={20} color="#FF5800" />
+                                <View style={[styles.methodIconBox, { backgroundColor: colors.primary + '15' }]}>
+                                    <MaterialCommunityIcons name="hand-coin" size={20} color={colors.primary} />
                                 </View>
                                 <View style={styles.methodInfo}>
-                                    <Text style={styles.methodName}>Pay on Delivery</Text>
-                                    <Text style={styles.methodDesc} numberOfLines={1}>Pay when your order arrives.</Text>
+                                    <Text style={[styles.methodName, { color: colors.heading }]}>Pay on Delivery</Text>
+                                    <Text style={[styles.methodDesc, { color: colors.text }]} numberOfLines={1}>Pay when your order arrives.</Text>
                                 </View>
                             </TouchableOpacity>
                         </View>
@@ -508,35 +582,33 @@ export default function CheckoutScreen() {
             </ScrollView>
 
             {/* Collapsible Order Summary & Bottom Footer */}
-            <Animated.View style={[styles.summaryContainer, summaryAnimatedStyle]}>
+            <Animated.View style={[styles.summaryContainer, { backgroundColor: colors.surface }, summaryAnimatedStyle]}>
                 <TouchableOpacity
                     activeOpacity={0.8}
                     onPress={() => setIsSummaryCollapsed(true)}
                     style={styles.handleWrapper}
                 >
-                    <View style={styles.handle} />
+                    <View style={[styles.handle, { backgroundColor: colors.primary + '20' }]} />
                 </TouchableOpacity>
 
                 <View style={styles.summaryContent}>
-
-
-                    <Text style={styles.summaryTitle}>Order Summary</Text>
+                    <Text style={[styles.summaryTitle, { color: colors.heading }]}>Order Summary</Text>
                     <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Subtotal</Text>
-                        <Text style={styles.summaryValue}>₱{calculateSubtotal().toFixed(2)}</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.text }]}>Subtotal</Text>
+                        <Text style={[styles.summaryValue, { color: colors.heading }]}>₱{calculateSubtotal().toFixed(2)}</Text>
                     </View>
                     <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Delivery fee</Text>
-                        <Text style={styles.summaryValue}>₱{DELIVERY_FEE.toFixed(2)}</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.text }]}>Delivery fee</Text>
+                        <Text style={[styles.summaryValue, { color: colors.heading }]}>₱{DELIVERY_FEE.toFixed(2)}</Text>
                     </View>
-                    <View style={styles.divider} />
+                    <View style={[styles.divider, { backgroundColor: colors.primary + '1A' }]} />
                     <View style={[styles.summaryRow, { marginTop: 10, marginBottom: 15 }]}>
-                        <Text style={styles.totalLabel}>Total ({menuItems.length} {menuItems.length === 1 ? 'item' : 'items'}):</Text>
-                        <Text style={styles.totalValue}>₱{calculateTotal().toFixed(2)}</Text>
+                        <Text style={[styles.totalLabel, { color: colors.heading }]}>Total ({menuItems.length} {menuItems.length === 1 ? 'item' : 'items'}):</Text>
+                        <Text style={[styles.totalValue, { color: colors.primary }]}>₱{calculateTotal().toFixed(2)}</Text>
                     </View>
 
                     <TouchableOpacity 
-                        style={[styles.processBtn, isSubmitting && styles.processBtnDisabled]}
+                        style={[styles.processBtn, { backgroundColor: colors.primary }, isSubmitting && styles.processBtnDisabled]}
                         onPress={handleProcessTransaction}
                         disabled={isSubmitting}
                         activeOpacity={0.8}
@@ -555,7 +627,7 @@ export default function CheckoutScreen() {
 
             {isSummaryCollapsed && (
                 <TouchableOpacity
-                    style={styles.maximizeBtn}
+                    style={[styles.maximizeBtn, { backgroundColor: colors.primary }]}
                     onPress={() => setIsSummaryCollapsed(false)}
                     activeOpacity={0.8}
                 >
@@ -571,34 +643,28 @@ export default function CheckoutScreen() {
                     router.push('/addresses' as any);
                 }}
             />
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#FFFFFF',
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 12,
         paddingBottom: 15,
-        backgroundColor: '#FFFFFF',
         borderBottomWidth: 1,
-        borderBottomColor: '#F3F4FB',
     },
     headerBtn: {
         width: 38,
         height: 38,
         borderRadius: 19,
-        backgroundColor: '#FFFFFF',
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#F3F4FB',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
@@ -615,7 +681,6 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 17,
         fontWeight: '700',
-        color: '#1F2937',
     },
     scrollContent: {
         paddingHorizontal: 16,
@@ -623,17 +688,14 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 14,
         fontWeight: '800',
-        color: '#1F2937',
         marginTop: 18,
         marginBottom: 12,
     },
     itemsContainer: {
         marginBottom: 6,
-        backgroundColor: '#FFFFFF',
     },
     itemCard: {
         flexDirection: 'row',
-        backgroundColor: '#FFFFFF',
         borderRadius: 15,
         padding: 10,
         marginBottom: 12,
@@ -643,7 +705,6 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 2,
         borderWidth: 1,
-        borderColor: '#F3F4F6',
     },
     itemImage: {
         width: 65,
@@ -664,7 +725,6 @@ const styles = StyleSheet.create({
     itemName: {
         fontSize: 13,
         fontWeight: '700',
-        color: '#111827',
         flex: 1,
         marginRight: 6,
     },
@@ -673,7 +733,6 @@ const styles = StyleSheet.create({
     },
     itemPriceSingle: {
         fontSize: 11,
-        color: '#6B7280',
         marginTop: 1,
     },
     cardFooter: {
@@ -685,7 +744,6 @@ const styles = StyleSheet.create({
     stepper: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F3F4F6',
         borderRadius: 10,
         padding: 3,
     },
@@ -693,30 +751,25 @@ const styles = StyleSheet.create({
         width: 24,
         height: 24,
         borderRadius: 7,
-        backgroundColor: '#FFFFFF',
         justifyContent: 'center',
         alignItems: 'center',
     },
     stepBtnDisabled: {
-        backgroundColor: '#F9FAFB',
+        opacity: 0.5,
     },
     stepValue: {
         fontSize: 12,
         fontWeight: '700',
-        color: '#1F2937',
         marginHorizontal: 8,
     },
     itemTotalPrice: {
         fontSize: 14,
         fontWeight: '800',
-        color: '#FF5800',
     },
     addressContainer: {
-        backgroundColor: '#F9FAFB',
         borderRadius: 15,
         padding: 12,
         borderWidth: 1,
-        borderColor: '#E5E7EB',
     },
     addressBox: {
         flexDirection: 'row',
@@ -724,7 +777,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingBottom: 10,
         borderBottomWidth: 1,
-        borderBottomColor: '#E5E7EB',
     },
     addressLeft: {
         flexDirection: 'row',
@@ -742,7 +794,6 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: '#FFF0E6',
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 10,
@@ -750,7 +801,6 @@ const styles = StyleSheet.create({
     addressText: {
         flex: 1,
         fontSize: 12,
-        color: '#4B5563',
         lineHeight: 18,
     },
     editBtn: {
@@ -767,17 +817,14 @@ const styles = StyleSheet.create({
     sectionActionText: {
         fontSize: 12,
         fontWeight: '600',
-        color: '#FF5800',
     },
     addressMainText: {
         fontSize: 15,
         fontWeight: '700',
-        color: '#1F2937',
         marginBottom: 2,
     },
     addressSubText: {
         fontSize: 12,
-        color: '#6B7280',
         lineHeight: 17,
         flexShrink: 1,
     },
@@ -790,14 +837,11 @@ const styles = StyleSheet.create({
     addAddressBtnText: {
         fontSize: 12,
         fontWeight: '600',
-        color: '#FF5800',
     },
     paymentContainer: {
-        backgroundColor: '#FFFFFF',
         borderRadius: 15,
         padding: 12,
         borderWidth: 1,
-        borderColor: '#F3F4F6',
     },
     categoryScroll: {
         marginBottom: 12,
@@ -806,22 +850,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 10,
-        backgroundColor: '#F9FAFB',
         marginRight: 6,
         borderWidth: 1,
-        borderColor: '#F3F4F6',
-    },
-    categoryTabActive: {
-        backgroundColor: '#FFF0E6',
-        borderColor: '#FF5800',
     },
     categoryTabText: {
         fontSize: 11,
         fontWeight: '600',
-        color: '#6B7280',
-    },
-    categoryTabTextActive: {
-        color: '#FF5800',
     },
     methodList: {
         marginTop: 2,
@@ -831,33 +865,26 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 10,
         borderBottomWidth: 1,
-        borderBottomColor: '#F9FAFB',
     },
     radio: {
         width: 18,
         height: 18,
         borderRadius: 9,
         borderWidth: 2,
-        borderColor: '#D1D5DB',
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 10,
-    },
-    radioActive: {
-        borderColor: '#FF5800',
     },
     radioInner: {
         width: 8,
         height: 8,
         borderRadius: 4,
-        backgroundColor: '#FF5800',
     },
     methodIconBox: {
         width: 28,
         height: 28,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#FFFFFF',
         borderRadius: 5,
         marginRight: 10,
     },
@@ -871,11 +898,9 @@ const styles = StyleSheet.create({
     methodName: {
         fontSize: 13,
         fontWeight: '700',
-        color: '#1F2937',
     },
     methodDesc: {
         fontSize: 11,
-        color: '#9CA3AF',
         marginTop: 1,
     },
     summaryContainer: {
@@ -883,8 +908,6 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        height: height * 0.4,
-        backgroundColor: '#FFFFFF',
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
         shadowColor: '#000',
@@ -903,7 +926,6 @@ const styles = StyleSheet.create({
     handle: {
         width: 44,
         height: 5,
-        backgroundColor: '#E5E7EB',
         borderRadius: 2.5,
     },
     summaryContent: {
@@ -914,7 +936,6 @@ const styles = StyleSheet.create({
     summaryTitle: {
         fontSize: 17,
         fontWeight: '900',
-        color: '#111827',
         letterSpacing: -0.3,
         marginBottom: 18,
     },
@@ -925,42 +946,36 @@ const styles = StyleSheet.create({
     },
     summaryLabel: {
         fontSize: 13,
-        color: '#6B7280',
     },
     summaryValue: {
         fontSize: 13,
         fontWeight: '600',
-        color: '#1F2937',
     },
     divider: {
         height: 1,
-        backgroundColor: '#F3F4F6',
         marginTop: 8,
     },
     totalLabel: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#1F2937',
     },
     totalValue: {
         fontSize: 18,
         fontWeight: '900',
-        color: '#D94F3D',
     },
     processBtn: {
-        backgroundColor: '#FF5800',
         height: 48,
         borderRadius: 24,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#FF5800',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 3 },
         shadowOpacity: 0.2,
         shadowRadius: 8,
         elevation: 4,
     },
     processBtnDisabled: {
-        backgroundColor: '#FFD7C2',
+        opacity: 0.5,
         shadowOpacity: 0,
         elevation: 0,
     },
@@ -975,11 +990,10 @@ const styles = StyleSheet.create({
         right: 16,
         width: 48,
         height: 48,
-        backgroundColor: '#FF5800',
         borderRadius: 24,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#FF5800',
+        shadowColor: '#000',
         shadowOpacity: 0.3,
         shadowRadius: 10,
         elevation: 10,
@@ -991,7 +1005,6 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         fontSize: 14,
-        color: '#9CA3AF',
         marginTop: 12,
         marginBottom: 18,
     },
@@ -999,10 +1012,8 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingVertical: 10,
         borderRadius: 15,
-        backgroundColor: '#FFF0E6',
     },
     browseBtnText: {
-        color: '#FF5800',
         fontSize: 13,
         fontWeight: '700',
     }

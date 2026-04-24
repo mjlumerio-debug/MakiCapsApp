@@ -11,7 +11,6 @@ import {
     Animated as RNAnimated,
     Easing as RNEasing,
     ScrollView,
-    StatusBar,
     StyleSheet,
     Text,
     TextInput,
@@ -19,12 +18,20 @@ import {
     View,
     Modal,
     Alert,
+    NativeModules
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { StatusBar } from 'expo-status-bar';
+import { Typography } from '@/constants/theme';
+
+const { StatusBarManager } = NativeModules;
+const STATUSBAR_HEIGHT = Platform.OS === 'ios' ? 20 : (StatusBarManager?.HEIGHT || 0);
 
 export default function PersonalInformationScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const { colors, isDark } = useAppTheme();
 
     const [fullName, setFullName] = useState('');
     const [email, setEmail] = useState('');
@@ -102,8 +109,6 @@ export default function PersonalInformationScreen() {
                     setTempFirstName(first);
                     setTempLastName(last);
                     setTempPhone(userPhone);
-                } else {
-                    console.log('[PersonalInformation] No profile data found in API or local storage.');
                 }
             } catch (e) {
                 console.error('Failed to load user profile:', e);
@@ -173,21 +178,17 @@ export default function PersonalInformationScreen() {
         if (hasChanges) {
             setIsSaving(true);
             try {
-                // 1. Prepare data for backend
                 const nameParts = fullName.split(' ');
                 const firstName = nameParts[0] || '';
                 const lastName = nameParts.slice(1).join(' ') || '';
-                // Backend expects +63 prefix for Consistency
                 const mobileNumber = phone.startsWith('+63') ? phone : `+63${phone}`;
 
-                // 2. Call Backend API
                 await updateUserProfile({
                     firstName,
                     lastName,
                     mobileNumber,
                 });
 
-                // 3. Persist updated profile back to AsyncStorage locally
                 const profileJson = await AsyncStorage.getItem('user_profile');
                 if (profileJson) {
                     const profile = JSON.parse(profileJson);
@@ -210,14 +211,14 @@ export default function PersonalInformationScreen() {
     };
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: '#FFFFFF' }]}>
-            <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar style={isDark ? 'light' : 'dark'} />
 
             <RNAnimated.View style={[styles.topNav, makeEntrance(headerAnim, 10)]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Feather name="arrow-left" size={22} color="#2C2C2C" />
+                    <Feather name="arrow-left" size={22} color={colors.heading} />
                 </TouchableOpacity>
-                <Text style={[styles.pageTitle, { color: '#2C2C2C' }]}>Personal Information</Text>
+                <Text style={[styles.pageTitle, { color: colors.heading }]}>Personal Information</Text>
                 <View style={{ width: 40 }} />
             </RNAnimated.View>
 
@@ -238,12 +239,12 @@ export default function PersonalInformationScreen() {
                                 style={styles.avatar}
                                 resizeMode="cover"
                             />
-                            <View style={styles.badgeContainer}>
+                            <View style={[styles.badgeContainer, { backgroundColor: colors.primary, borderColor: colors.surface }]}>
                                 <MaterialIcons name="verified" size={13} color="#FFFFFF" />
                             </View>
                         </View>
                         <TouchableOpacity>
-                            <Text style={styles.changePhotoText}>Change your photo</Text>
+                            <Text style={[styles.changePhotoText, { color: colors.primary }]}>Change your photo</Text>
                         </TouchableOpacity>
                     </RNAnimated.View>
 
@@ -255,18 +256,18 @@ export default function PersonalInformationScreen() {
                             onPress={() => setNameModalVisible(true)}
                             activeOpacity={0.7}
                         >
-                            <Text style={[styles.inputLabel, { color: '#888888' }]}>Full Name</Text>
-                            <View style={styles.interactiveInputRow}>
-                                <Text style={[styles.staticText, { color: '#2C2C2C' }]}>{fullName}</Text>
-                                <Feather name="edit-2" size={14} color="#888888" />
+                            <Text style={[styles.inputLabel, { color: colors.text }]}>Full Name</Text>
+                            <View style={[styles.interactiveInputRow, { borderBottomColor: colors.primary + '1A' }]}>
+                                <Text style={[styles.staticText, { color: colors.heading }]}>{fullName}</Text>
+                                <Feather name="edit-2" size={14} color={colors.text} />
                             </View>
                         </TouchableOpacity>
 
                         {/* Email */}
                         <View style={styles.inputGroup}>
-                            <Text style={[styles.inputLabel, { color: '#888888' }]}>Email</Text>
-                            <View style={styles.staticInputRow}>
-                                <Text style={[styles.staticText, { color: '#888888' }]}>{email}</Text>
+                            <Text style={[styles.inputLabel, { color: colors.text }]}>Email</Text>
+                            <View style={[styles.staticInputRow, { borderBottomColor: colors.primary + '1A' }]}>
+                                <Text style={[styles.staticText, { color: colors.text }]}>{email}</Text>
                             </View>
                         </View>
 
@@ -276,26 +277,26 @@ export default function PersonalInformationScreen() {
                             onPress={() => setPhoneModalVisible(true)}
                             activeOpacity={0.7}
                         >
-                            <Text style={[styles.inputLabel, { color: '#888888' }]}>Mobile Number</Text>
-                            <View style={styles.interactiveInputRow}>
+                            <Text style={[styles.inputLabel, { color: colors.text }]}>Mobile Number</Text>
+                            <View style={[styles.interactiveInputRow, { borderBottomColor: colors.primary + '1A' }]}>
                                 <View style={styles.phoneDisplayRow}>
-                                    <Text style={[styles.phonePrefix, { color: '#2C2C2C' }]}>+63</Text>
-                                    <Text style={[styles.staticText, { color: '#2C2C2C' }]}>{phone}</Text>
+                                    <Text style={[styles.phonePrefix, { color: colors.heading }]}>+63</Text>
+                                    <Text style={[styles.staticText, { color: colors.heading }]}>{phone}</Text>
                                 </View>
-                                <Feather name="edit-2" size={14} color="#888888" />
+                                <Feather name="edit-2" size={14} color={colors.text} />
                             </View>
                         </TouchableOpacity>
                     </RNAnimated.View>
                 </ScrollView>
 
-                {/* Save Changes Button - Styled with dynamic safe area insets */}
+                {/* Save Changes Button */}
                 <RNAnimated.View style={[
                     styles.saveWrap, 
-                    { paddingBottom: Math.max(insets.bottom, 24) },
+                    { paddingBottom: Math.max(insets.bottom, 24), backgroundColor: colors.background, borderTopColor: colors.primary + '0A' },
                     makeEntrance(buttonAnim, 12)
                 ]}>
                     <TouchableOpacity
-                        style={[styles.finalSaveButton, isSaving && { opacity: 0.7 }]}
+                        style={[styles.finalSaveButton, { backgroundColor: colors.primary, shadowColor: colors.primary }, isSaving && { opacity: 0.7 }]}
                         activeOpacity={0.85}
                         onPress={handleFinalSave}
                         disabled={isSaving}
@@ -311,43 +312,45 @@ export default function PersonalInformationScreen() {
 
             {/* Name Edit Modal */}
             <Modal visible={isNameModalVisible} animationType="slide" transparent={false}>
-                <SafeAreaView style={styles.modalContainer}>
-                    <View style={styles.modalHeader}>
+                <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+                    <View style={[styles.modalHeader, { borderBottomColor: colors.primary + '0A' }]}>
                         <TouchableOpacity onPress={() => setNameModalVisible(false)} style={styles.modalCloseBtn}>
-                            <Ionicons name="arrow-back" size={24} color="#2C2C2C" />
+                            <Ionicons name="arrow-back" size={24} color={colors.heading} />
                         </TouchableOpacity>
-                        <Text style={styles.modalTitle}>Name</Text>
+                        <Text style={[styles.modalTitle, { color: colors.heading }]}>Name</Text>
                         <View style={{ width: 40 }} />
                     </View>
                     
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalSubtitle}>This is how we will address you.</Text>
+                        <Text style={[styles.modalSubtitle, { color: colors.text }]}>This is how we will address you.</Text>
                         
                         <View style={styles.modalInputGroup}>
-                            <Text style={styles.modalInputLabel}>First Name <Text style={{color: '#FF4444'}}>*</Text></Text>
+                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>First Name <Text style={{color: '#FF4444'}}>*</Text></Text>
                             <TextInput
-                                style={styles.modalInput}
+                                style={[styles.modalInput, { backgroundColor: colors.surface, borderColor: colors.primary + '1A', color: colors.heading }]}
                                 value={tempFirstName}
                                 onChangeText={setTempFirstName}
                                 placeholder="Enter first name"
+                                placeholderTextColor={colors.text + '80'}
                                 autoFocus
                             />
                         </View>
 
                         <View style={styles.modalInputGroup}>
-                            <Text style={styles.modalInputLabel}>Last Name <Text style={{color: '#FF4444'}}>*</Text></Text>
+                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>Last Name <Text style={{color: '#FF4444'}}>*</Text></Text>
                             <TextInput
-                                style={styles.modalInput}
+                                style={[styles.modalInput, { backgroundColor: colors.surface, borderColor: colors.primary + '1A', color: colors.heading }]}
                                 value={tempLastName}
                                 onChangeText={setTempLastName}
                                 placeholder="Enter last name"
+                                placeholderTextColor={colors.text + '80'}
                             />
                         </View>
                     </View>
 
                     <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 20) }]}>
                         <TouchableOpacity 
-                            style={[styles.modalSaveBtn, (!tempFirstName || !tempLastName) && styles.disabledBtn]} 
+                            style={[styles.modalSaveBtn, { backgroundColor: colors.primary }, (!tempFirstName || !tempLastName) && styles.disabledBtn]} 
                             onPress={handleSaveName}
                             disabled={!tempFirstName || !tempLastName}
                         >
@@ -359,39 +362,40 @@ export default function PersonalInformationScreen() {
 
             {/* Phone Edit Modal */}
             <Modal visible={isPhoneModalVisible} animationType="slide" transparent={false}>
-                <SafeAreaView style={styles.modalContainer}>
-                    <View style={styles.modalHeader}>
+                <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+                    <View style={[styles.modalHeader, { borderBottomColor: colors.primary + '0A' }]}>
                         <TouchableOpacity onPress={() => setPhoneModalVisible(false)} style={styles.modalCloseBtn}>
-                            <Ionicons name="arrow-back" size={24} color="#2C2C2C" />
+                            <Ionicons name="arrow-back" size={24} color={colors.heading} />
                         </TouchableOpacity>
-                        <Text style={styles.modalTitle}>Mobile Number</Text>
+                        <Text style={[styles.modalTitle, { color: colors.heading }]}>Mobile Number</Text>
                         <View style={{ width: 40 }} />
                     </View>
                     
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalSubtitle}>You will be contacted about your order at this Mobile Number.</Text>
+                        <Text style={[styles.modalSubtitle, { color: colors.text }]}>You will be contacted about your order at this Mobile Number.</Text>
                         
                         <View style={styles.modalInputGroup}>
-                            <Text style={styles.modalInputLabel}>Mobile Number</Text>
+                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>Mobile Number</Text>
                         </View>
                         
                         <View style={styles.phoneInputRow}>
                             <TouchableOpacity 
-                                style={styles.countryPicker}
+                                style={[styles.countryPicker, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}
                                 onPress={() => setCountryPickerVisible(!isCountryPickerVisible)}
                             >
                                 <Image 
                                     source={{ uri: 'https://flagcdn.com/w40/ph.png' }} 
                                     style={styles.flagIcon} 
                                 />
-                                <Text style={styles.countryCode}>+63</Text>
-                                <Ionicons name="chevron-down" size={14} color="#888888" />
+                                <Text style={[styles.countryCode, { color: colors.heading }]}>+63</Text>
+                                <Ionicons name="chevron-down" size={14} color={colors.text} />
                             </TouchableOpacity>
                             <TextInput
-                                style={[styles.modalInput, styles.phoneTextInput, phoneError ? styles.errorInput : null]}
+                                style={[styles.modalInput, styles.phoneTextInput, { backgroundColor: colors.surface, borderColor: colors.primary + '1A', color: colors.heading }, phoneError ? styles.errorInput : null]}
                                 value={tempPhone}
                                 onChangeText={validatePhone}
                                 placeholder="9XXXXXXXXX"
+                                placeholderTextColor={colors.text + '80'}
                                 keyboardType="phone-pad"
                                 maxLength={10}
                                 autoFocus
@@ -402,11 +406,10 @@ export default function PersonalInformationScreen() {
                             <Text style={styles.errorText}>{phoneError}</Text>
                         ) : null}
 
-                        {/* Country preview visible only when toggled */}
                         {isCountryPickerVisible && (
-                            <View style={styles.countryPreview}>
-                                <Ionicons name="checkmark" size={16} color="#2C2C2C" />
-                                <Text style={styles.countryPreviewText}>+63 Philippines</Text>
+                            <View style={[styles.countryPreview, { backgroundColor: colors.primary + '08', borderColor: colors.primary + '1A' }]}>
+                                <Ionicons name="checkmark" size={16} color={colors.heading} />
+                                <Text style={[styles.countryPreviewText, { color: colors.heading }]}>+63 Philippines</Text>
                                 <Image 
                                     source={{ uri: 'https://flagcdn.com/w40/ph.png' }} 
                                     style={styles.flagIconSmall} 
@@ -419,6 +422,7 @@ export default function PersonalInformationScreen() {
                         <TouchableOpacity 
                             style={[
                                 styles.modalContinueBtn, 
+                                { backgroundColor: colors.primary },
                                 (tempPhone.length !== 10 || !!phoneError) && styles.disabledContinueBtn
                             ]} 
                             onPress={handleSavePhone}
@@ -433,25 +437,25 @@ export default function PersonalInformationScreen() {
                 </SafeAreaView>
             </Modal>
 
-            {/* Custom Success Alert Modal */}
+            {/* Success Alert Modal */}
             <Modal
                 visible={isSuccessModalVisible}
                 transparent={true}
                 animationType="fade"
             >
-                <View style={styles.modalOverlay}>
-                    <RNAnimated.View style={styles.successAlertContent}>
-                        <View style={styles.successIconOuter}>
-                            <View style={styles.successIconInner}>
+                <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+                    <RNAnimated.View style={[styles.successAlertContent, { backgroundColor: colors.surface }]}>
+                        <View style={[styles.successIconOuter, { backgroundColor: colors.primary + '15' }]}>
+                            <View style={[styles.successIconInner, { backgroundColor: colors.primary }]}>
                                 <Ionicons name="checkmark" size={32} color="#FFFFFF" />
                             </View>
                         </View>
                         
-                        <Text style={styles.successTitle}>Profile Updated</Text>
-                        <Text style={styles.successSubtitle}>Your changes have been saved successfully!</Text>
+                        <Text style={[styles.successTitle, { color: colors.heading }]}>Profile Updated</Text>
+                        <Text style={[styles.successSubtitle, { color: colors.text }]}>Your changes have been saved successfully!</Text>
                         
                         <TouchableOpacity 
-                            style={styles.successOkBtn}
+                            style={[styles.successOkBtn, { backgroundColor: colors.primary }]}
                             onPress={() => {
                                 setSuccessModalVisible(false);
                                 router.back();
@@ -486,7 +490,7 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: 0.2,
-        fontFamily: 'ShipporiMincho-Bold',
+        fontFamily: Typography.h1,
     },
     scrollContent: {
         paddingBottom: 24,
@@ -510,18 +514,15 @@ const styles = StyleSheet.create({
         position: 'absolute',
         bottom: 2,
         right: 2,
-        backgroundColor: '#FF5800',
         borderRadius: 10,
         width: 20,
         height: 20,
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 2,
-        borderColor: '#FFFFFF',
     },
     changePhotoText: {
         fontSize: 14,
-        color: '#FF5800',
         fontWeight: '600',
     },
     form: {
@@ -534,24 +535,22 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginBottom: 10,
         fontWeight: '600',
-        color: '#888888',
     },
     interactiveInputRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         borderBottomWidth: 1.5,
-        borderBottomColor: '#F0F0F0',
         paddingBottom: 12,
     },
     staticInputRow: {
         borderBottomWidth: 1.5,
-        borderBottomColor: '#F0F0F0',
         paddingBottom: 12,
     },
     staticText: {
         fontSize: 16,
         fontWeight: '500',
+        fontFamily: Typography.body,
     },
     phoneDisplayRow: {
         flexDirection: 'row',
@@ -565,17 +564,13 @@ const styles = StyleSheet.create({
     saveWrap: {
         paddingHorizontal: 24,
         paddingTop: 16,
-        backgroundColor: '#FFFFFF',
         borderTopWidth: 1,
-        borderTopColor: '#F8F9FA',
     },
     finalSaveButton: {
-        backgroundColor: '#FF5800', // MakiCaps Orange
-        borderRadius: 28, // Fully rounded (half of height 56)
+        borderRadius: 28,
         height: 56,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#FF5800',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.2,
         shadowRadius: 8,
@@ -587,11 +582,8 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         letterSpacing: 0.5,
     },
-
-    // Modal Styles
     modalContainer: {
         flex: 1,
-        backgroundColor: '#FFFFFF',
     },
     modalHeader: {
         flexDirection: 'row',
@@ -600,7 +592,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingVertical: 12,
         borderBottomWidth: 1,
-        borderBottomColor: '#F0F0F0',
     },
     modalCloseBtn: {
         padding: 4,
@@ -608,8 +599,7 @@ const styles = StyleSheet.create({
     modalTitle: {
         fontSize: 19,
         fontWeight: '700',
-        color: '#2C2C2C',
-        fontFamily: 'ShipporiMincho-Bold', // Cozy typography
+        fontFamily: Typography.h1,
     },
     modalContent: {
         flex: 1,
@@ -618,9 +608,9 @@ const styles = StyleSheet.create({
     },
     modalSubtitle: {
         fontSize: 15,
-        color: '#666666',
         lineHeight: 22,
         marginBottom: 32,
+        fontFamily: Typography.body,
     },
     modalInputGroup: {
         marginBottom: 24,
@@ -628,30 +618,25 @@ const styles = StyleSheet.create({
     modalInputLabel: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#2C2C2C',
         marginBottom: 10,
     },
     modalInput: {
         height: 54,
         borderWidth: 1.5,
-        borderColor: '#E5E5E5',
         borderRadius: 12,
         paddingHorizontal: 16,
         fontSize: 16,
-        color: '#2C2C2C',
-        backgroundColor: '#FFFFFF',
+        fontFamily: Typography.body,
     },
     modalFooter: {
         paddingHorizontal: 20,
         paddingTop: 10,
     },
     modalSaveBtn: {
-        backgroundColor: '#FF5800', // MakiCaps Orange
         height: 54,
         borderRadius: 27,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#FF5800',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
@@ -664,10 +649,7 @@ const styles = StyleSheet.create({
     },
     disabledBtn: {
         opacity: 0.5,
-        backgroundColor: '#F5F5F5',
     },
-
-    // Phone Modal specific
     phoneInputRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -678,7 +660,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         height: 54,
         borderWidth: 1.5,
-        borderColor: '#E5E5E5',
         borderRadius: 12,
         paddingHorizontal: 12,
         gap: 6,
@@ -691,7 +672,6 @@ const styles = StyleSheet.create({
     countryCode: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#2C2C2C',
     },
     phoneTextInput: {
         flex: 1,
@@ -708,19 +688,16 @@ const styles = StyleSheet.create({
     countryPreview: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFF7F0', // Light orange tint for cozy look
         padding: 12,
         borderRadius: 10,
         marginTop: 12,
         alignSelf: 'flex-start',
         borderWidth: 1,
-        borderColor: '#FFE5D0',
         gap: 8,
     },
     countryPreviewText: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#2C2C2C',
     },
     flagIconSmall: {
         width: 20,
@@ -728,32 +705,26 @@ const styles = StyleSheet.create({
         borderRadius: 1,
     },
     modalContinueBtn: {
-        backgroundColor: '#FF5800', // MakiCaps Orange
         height: 54,
         borderRadius: 27,
         justifyContent: 'center',
         alignItems: 'center',
     },
     disabledContinueBtn: {
-        backgroundColor: '#F5F5F5',
+        opacity: 0.5,
     },
     modalContinueBtnText: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#2C2C2C',
     },
-
-    // Success Alert Styles
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'center',
         alignItems: 'center',
         padding: 32,
     },
     successAlertContent: {
         width: '100%',
-        backgroundColor: '#FFFFFF',
         borderRadius: 24,
         padding: 32,
         alignItems: 'center',
@@ -767,7 +738,6 @@ const styles = StyleSheet.create({
         width: 72,
         height: 72,
         borderRadius: 36,
-        backgroundColor: '#FFF0E6', // Very light orange
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 20,
@@ -776,39 +746,32 @@ const styles = StyleSheet.create({
         width: 54,
         height: 54,
         borderRadius: 27,
-        backgroundColor: '#FF5800', // Brand orange
         justifyContent: 'center',
         alignItems: 'center',
     },
     successTitle: {
         fontSize: 22,
         fontWeight: '700',
-        color: '#2C2C2C',
         marginBottom: 12,
-        fontFamily: 'ShipporiMincho-Bold',
+        fontFamily: Typography.h1,
     },
     successSubtitle: {
         fontSize: 16,
-        color: '#666666',
         textAlign: 'center',
         lineHeight: 24,
         marginBottom: 28,
+        fontFamily: Typography.body,
     },
     successOkBtn: {
-        backgroundColor: '#FF5800',
         width: '100%',
         height: 54,
         borderRadius: 27,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#FF5800',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
     },
     successOkBtnText: {
         color: '#FFFFFF',
         fontSize: 16,
         fontWeight: '700',
-    }
+    },
 });

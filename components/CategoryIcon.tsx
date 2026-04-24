@@ -3,8 +3,10 @@ import { Image } from 'expo-image';
 import React, { memo, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { type Category } from '@/lib/menu_store';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 
 const CategoryIcon = memo(function CategoryIcon({ cat, isActive }: { cat: Category; isActive: boolean }) {
+  const { colors } = useAppTheme();
   const [imageError, setImageError] = useState(false);
 
   if (cat.image_path && !imageError) {
@@ -22,7 +24,7 @@ const CategoryIcon = memo(function CategoryIcon({ cat, isActive }: { cat: Catego
     );
   }
 
-  return <Feather name="tag" size={18} color={isActive ? "#C87D87" : "#7A5560"} />;
+  return <Feather name="tag" size={18} color={isActive ? colors.primary : colors.text} />;
 });
 
 const styles = StyleSheet.create({

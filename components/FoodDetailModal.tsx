@@ -22,6 +22,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { formatPeso, resolveProductImage, type Food } from '../lib/menu_store';
 import { type CatalogMode } from '@/state/reducers/branchReducer';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -46,6 +47,7 @@ export default function FoodDetailModal({
     onCheckout,
     catalogMode = 'branch',
 }: FoodDetailModalProps) {
+    const { colors, isDark } = useAppTheme();
     const isGlobalMode = catalogMode === 'global';
     const translateY = useSharedValue(SCREEN_HEIGHT);
     const opacity = useSharedValue(0);
@@ -86,7 +88,7 @@ export default function FoodDetailModal({
         width: 28,
         height: 28,
         borderRadius: 14,
-        backgroundColor: '#FF5800',
+        backgroundColor: colors.primary,
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 9999,
@@ -115,13 +117,16 @@ export default function FoodDetailModal({
 
     const handleAddToCart = () => {
         if (!item) return;
-        const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
-        if (maxQuantity <= 0) {
-            Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+        const rawStock = item.max_quantity ?? item.stock;
+        const hasStockLimit = rawStock != null && Number(rawStock) > 0;
+        const maxQuantity = hasStockLimit ? Math.floor(Number(rawStock)) : Infinity;
+
+        if (hasStockLimit && maxQuantity <= 0) {
+            Alert.alert('Out of Stock', 'This item is currently out of stock.');
             return;
         }
-        if (quantity > maxQuantity) {
-            Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+        if (hasStockLimit && quantity > maxQuantity) {
+            Alert.alert('Stock Limit', `Only ${maxQuantity} servings available.`);
             return;
         }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -146,9 +151,11 @@ export default function FoodDetailModal({
     const displayPrice = formatPeso(item.selling_price);
     const displayImage = resolveProductImage(item.image_path);
 
-    const stockCount = Number(item.max_quantity ?? item.stock ?? 0);
+    const rawStock = item.max_quantity ?? item.stock;
+    const hasStockLimit = rawStock != null && Number(rawStock) > 0;
+    const stockCount = hasStockLimit ? Math.floor(Number(rawStock)) : Infinity;
     const isAvailableAtBranch = item.is_available;
-    const isAvailable = !isGlobalMode && stockCount > 0 && isAvailableAtBranch;
+    const isAvailable = !isGlobalMode && isAvailableAtBranch !== false;
     const canAddToCart = isAvailable && !isGlobalMode;
 
     return (
@@ -163,17 +170,17 @@ export default function FoodDetailModal({
                 <Animated.View style={[styles.backdrop, backdropStyle]} />
 
                 <Animated.View style={flyStyle}>
-                    <Feather name="plus" size={14} color="#FBEAD6" />
+                    <Feather name="plus" size={14} color={colors.background} />
                 </Animated.View>
 
                 <Animated.View style={[styles.container, animatedStyle]}>
-                    <View style={styles.modalBody}>
+                    <View style={[styles.modalBody, { backgroundColor: colors.background }]}>
                         {/* Transparent Header overlaying image */}
                         <View style={styles.headerRow}>
-                            <TouchableOpacity style={styles.backBtn} onPress={handleClose}>
-                                <Feather name="arrow-left" size={24} color="#4A2C35" />
+                            <TouchableOpacity style={[styles.backBtn, { backgroundColor: colors.surface + '66' }]} onPress={handleClose}>
+                                <Feather name="arrow-left" size={24} color={colors.heading} />
                             </TouchableOpacity>
-                            <Text style={styles.headerTitle}>Details</Text>
+                            <Text style={[styles.headerTitle, { color: colors.heading }]}>Details</Text>
                             <View style={styles.headerPlaceholder} />
                         </View>
 
@@ -204,18 +211,18 @@ export default function FoodDetailModal({
                         </View>
 
                         {/* Dark Content Card */}
-                        <View style={styles.darkContentCard}>
+                        <View style={[styles.darkContentCard, { backgroundColor: colors.surface }]}>
                             <View style={styles.titleRow}>
                                 <View style={styles.titleInfo}>
-                                    <Text style={styles.foodName}>{item.name}</Text>
+                                    <Text style={[styles.foodName, { color: colors.heading }]}>{item.name}</Text>
                                     <View style={styles.priceContainer}>
-                                        <Text style={styles.fromLabel}>From: </Text>
-                                        <Text style={styles.priceValue}>{displayPrice}</Text>
+                                        <Text style={[styles.fromLabel, { color: colors.text }]}>From: </Text>
+                                        <Text style={[styles.priceValue, { color: colors.primary }]}>{displayPrice}</Text>
                                     </View>
                                     {isGlobalMode ? (
                                         <View style={styles.unavailableBanner}>
-                                            <Ionicons name="globe-outline" size={16} color="#4A90E2" />
-                                            <Text style={[styles.stockStatusText, { color: '#4A90E2' }]}>
+                                            <Ionicons name="globe-outline" size={16} color={colors.primary} />
+                                            <Text style={[styles.stockStatusText, { color: colors.primary }]}>
                                                 Select a delivery address to order
                                             </Text>
                                         </View>
@@ -233,7 +240,7 @@ export default function FoodDetailModal({
 
                                 <TouchableOpacity
                                     activeOpacity={0.7}
-                                    style={styles.favCircle}
+                                    style={[styles.favCircle, { backgroundColor: colors.primary + '1A' }]}
                                     onPress={() => {
                                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                                         onToggleFavorite(item.id);
@@ -242,14 +249,14 @@ export default function FoodDetailModal({
                                     <Ionicons
                                         name={isFavorite ? "heart" : "heart-outline"}
                                         size={24}
-                                        color={isFavorite ? "#C87D87" : "#7A5560"}
+                                        color={isFavorite ? colors.primary : colors.text}
                                     />
                                 </TouchableOpacity>
                             </View>
 
                             {item.description ? (
                                 <View style={styles.descriptionHeaderContainer}>
-                                    <Text style={styles.descriptionHeader}>Description</Text>
+                                    <Text style={[styles.descriptionHeader, { color: colors.heading }]}>Description</Text>
                                 </View>
                             ) : null}
 
@@ -266,14 +273,14 @@ export default function FoodDetailModal({
                                         return (
                                             <View style={styles.descriptionContainer}>
                                                 <Text
-                                                    style={styles.modalDescription}
+                                                    style={[styles.modalDescription, { color: colors.text }]}
                                                     numberOfLines={(!isLong || isExpanded) ? undefined : 3}
                                                 >
                                                     {item.description}
                                                 </Text>
                                                 {isLong && (
                                                     <TouchableOpacity onPress={() => setIsExpanded(!isExpanded)} style={styles.seeMoreBtn}>
-                                                        <Text style={styles.seeMoreText}>
+                                                        <Text style={[styles.seeMoreText, { color: colors.primary }]}>
                                                             {isExpanded ? 'See less' : 'See all'}
                                                         </Text>
                                                     </TouchableOpacity>
@@ -284,39 +291,39 @@ export default function FoodDetailModal({
                                 ) : null}
                             </ScrollView>
 
-                            <View style={styles.footerContainer}>
-                                <View style={styles.divider} />
+                            <View style={[styles.footerContainer, { backgroundColor: colors.surface }]}>
+                                <View style={[styles.divider, { borderColor: colors.primary }]} />
 
                                 {/* Standardized Footer */}
                                 <View style={styles.footerRow}>
-                                    <View style={styles.qtyPill}>
+                                    <View style={[styles.qtyPill, { backgroundColor: colors.background }]}>
                                         <TouchableOpacity
-                                            style={styles.qtyBtn}
+                                            style={[styles.qtyBtn, { borderColor: colors.surface }]}
                                             onPress={() => setQuantity(Math.max(1, quantity - 1))}
                                         >
-                                            <Ionicons name="remove" size={20} color="#BBB" />
+                                            <Ionicons name="remove" size={20} color={colors.text} />
                                         </TouchableOpacity>
-                                        <Text style={styles.qtyValue}>{quantity.toString().padStart(2, '0')}</Text>
+                                        <Text style={[styles.qtyValue, { color: colors.heading }]}>{quantity.toString().padStart(2, '0')}</Text>
                                         <TouchableOpacity
-                                            style={styles.qtyBtnAdd}
+                                            style={[styles.qtyBtnAdd, { backgroundColor: colors.primary }]}
                                             onPress={() => {
-                                                if (quantity >= stockCount) {
-                                                    Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+                                                if (hasStockLimit && quantity >= stockCount) {
+                                                    Alert.alert('Stock Limit', `Only ${stockCount} servings available.`);
                                                     return;
                                                 }
                                                 setQuantity(quantity + 1);
                                             }}
                                         >
-                                            <Ionicons name="add" size={20} color="#FBEAD6" />
+                                            <Ionicons name="add" size={20} color={colors.background} />
                                         </TouchableOpacity>
                                     </View>
 
                                     <TouchableOpacity
-                                        style={[styles.atcActionBtn, !canAddToCart && styles.atcActionBtnDisabled]}
+                                        style={[styles.atcActionBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, !canAddToCart && styles.atcActionBtnDisabled]}
                                         onPress={handleAddToCart}
                                         disabled={!canAddToCart}
                                     >
-                                        <Text style={styles.atcBtnText}>{isGlobalMode ? 'Browse Only' : (isAvailable ? 'Add to Cart' : 'Unavailable')}</Text>
+                                        <Text style={[styles.atcBtnText, { color: colors.background }]}>{isGlobalMode ? 'Browse Only' : (isAvailable ? 'Add to Cart' : 'Unavailable')}</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -396,7 +403,7 @@ const styles = StyleSheet.create({
     },
     darkContentCard: {
         flex: 1,
-        backgroundColor: '#F0C4CB', // 30% Blush
+        backgroundColor: '#D38C9D', // 30% Blush
         borderTopLeftRadius: 40,
         borderTopRightRadius: 40,
         marginTop: -30,
@@ -413,7 +420,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     footerContainer: {
-        backgroundColor: '#F0C4CB', // 30% Blush
+        backgroundColor: '#D38C9D', // 30% Blush
         paddingBottom: 30,
     },
     titleRow: {
@@ -441,7 +448,7 @@ const styles = StyleSheet.create({
     },
     priceValue: {
         fontSize: 15,
-        color: '#C87D87', // Antique Rose
+        color: '#D38C9D', // Antique Rose
         fontWeight: '700',
     },
     stockStatusText: {
@@ -476,7 +483,7 @@ const styles = StyleSheet.create({
         marginTop: 4,
     },
     seeMoreText: {
-        color: '#C87D87', // Antique Rose
+        color: '#D38C9D', // Antique Rose
         fontSize: 13,
         fontWeight: '600',
     },
@@ -485,7 +492,7 @@ const styles = StyleSheet.create({
         width: '100%',
         borderStyle: 'dashed',
         borderWidth: 1,
-        borderColor: '#C87D87', // Antique Rose
+        borderColor: '#D38C9D', // Antique Rose
         marginBottom: 20,
         borderRadius: 1,
         opacity: 0.3,
@@ -519,7 +526,7 @@ const styles = StyleSheet.create({
         height: 42,
         borderRadius: 21,
         borderWidth: 1.5,
-        borderColor: '#F0C4CB', // Blush
+        borderColor: '#D38C9D', // Blush
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -527,7 +534,7 @@ const styles = StyleSheet.create({
         width: 42,
         height: 42,
         borderRadius: 21,
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -538,14 +545,14 @@ const styles = StyleSheet.create({
         marginHorizontal: 12,
     },
     atcActionBtn: {
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         paddingHorizontal: 35,
         paddingVertical: 18,
         borderRadius: 30,
         flex: 1,
         marginLeft: 15,
         alignItems: 'center',
-        shadowColor: '#C87D87',
+        shadowColor: '#D38C9D',
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
         shadowRadius: 10,
@@ -596,3 +603,4 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
 });
+

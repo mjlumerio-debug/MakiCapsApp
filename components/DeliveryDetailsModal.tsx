@@ -14,6 +14,7 @@ import {
     TouchableWithoutFeedback,
     Keyboard
 } from 'react-native';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatAddressForDisplay, useUiStore, setActiveAddress, setAddressFromPlace } from '../lib/ui_store';
 import { searchPlaces, getPlaceDetails } from '../lib/google_location';
@@ -30,6 +31,7 @@ export default function DeliveryDetailsModal({
     onClose,
     onAddAddress,
 }: DeliveryDetailsModalProps) {
+    const { colors, isDark } = useAppTheme();
     const insets = useSafeAreaInsets();
     const { addresses, activeAddressId } = useUiStore();
     const [searchQuery, setSearchQuery] = useState('');
@@ -84,11 +86,11 @@ export default function DeliveryDetailsModal({
                 style={[styles.addressItem, isActive && styles.addressItemActive]}
                 onPress={() => handleSelectAddress(item.id)}
             >
-                <View style={[styles.iconBox, isActive && styles.iconBoxActive]}>
+                <View style={[styles.iconBox, { backgroundColor: colors.surface }, isActive && { backgroundColor: colors.primary }]}>
                     <Feather 
                         name={item.notes?.toLowerCase().includes('home') ? 'home' : item.notes?.toLowerCase().includes('work') ? 'briefcase' : 'map-pin'} 
                         size={18} 
-                        color={isActive ? '#FBEAD6' : '#C87D87'} 
+                        color={isActive ? colors.background : colors.primary} 
                     />
                 </View>
                 <View style={styles.addressInfo}>
@@ -99,7 +101,7 @@ export default function DeliveryDetailsModal({
                         {item.fullAddress}
                     </Text>
                 </View>
-                {isActive && <Ionicons name="checkmark-circle" size={20} color="#C87D87" />}
+                {isActive && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
             </TouchableOpacity>
         );
     };
@@ -130,29 +132,29 @@ export default function DeliveryDetailsModal({
                         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                         style={styles.content}
                     >
-                        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
+                        <View style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: insets.bottom + 20 }]}>
                             {/* Handle */}
-                            <View style={styles.handle} />
+                            <View style={[styles.handle, { backgroundColor: colors.primary }]} />
                             
                             {/* Header */}
                             <View style={styles.header}>
-                                <Text style={styles.headerTitle}>Delivery Address</Text>
+                                <Text style={[styles.headerTitle, { color: colors.heading }]}>Delivery Address</Text>
                                 <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                                    <Ionicons name="close" size={24} color="#4A2C35" />
+                                    <Ionicons name="close" size={24} color={colors.heading} />
                                 </TouchableOpacity>
                             </View>
 
                             {/* Search Bar */}
-                            <View style={styles.searchContainer}>
-                                <Ionicons name="search" size={20} color="#8A8A8A" style={{ marginLeft: 12 }} />
+                            <View style={[styles.searchContainer, { backgroundColor: colors.surface }]}>
+                                <Ionicons name="search" size={20} color={colors.text} style={{ marginLeft: 12 }} />
                                 <TextInput
                                     placeholder="Search for a new address..."
-                                    style={styles.searchInput}
+                                    style={[styles.searchInput, { color: colors.heading }]}
                                     value={searchQuery}
                                     onChangeText={setSearchQuery}
-                                    placeholderTextColor="#8A8A8A"
+                                    placeholderTextColor={colors.text}
                                 />
-                                {isSearching && <ActivityIndicator size="small" color="#C87D87" style={{ marginRight: 12 }} />}
+                                {isSearching && <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 12 }} />}
                                 {searchQuery.length > 0 && !isSearching && (
                                     <TouchableOpacity onPress={() => setSearchQuery('')}>
                                         <Ionicons name="close-circle" size={20} color="#CCC" style={{ marginRight: 12 }} />
@@ -183,11 +185,11 @@ export default function DeliveryDetailsModal({
                                                 // Note: HomeDashboard will handle GPS detection if no active address
                                             }}
                                         >
-                                            <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#C87D87" />
-                                            <Text style={styles.currentLocationText}>Use Current Location</Text>
+                                            <MaterialCommunityIcons name="crosshairs-gps" size={20} color={colors.primary} />
+                                            <Text style={[styles.currentLocationText, { color: colors.primary }]}>Use Current Location</Text>
                                         </TouchableOpacity>
 
-                                        <Text style={styles.sectionTitle}>Saved Addresses</Text>
+                                        <Text style={[styles.sectionTitle, { color: colors.text }]}>Saved Addresses</Text>
                                         <FlatList
                                             data={addresses}
                                             keyExtractor={(item) => item.id}
@@ -205,11 +207,11 @@ export default function DeliveryDetailsModal({
                                         
                                         {addresses.length > 0 && (
                                             <TouchableOpacity 
-                                                style={styles.manageBtn}
+                                                style={[styles.manageBtn, { borderColor: colors.primary }]}
                                                 onPress={onAddAddress}
                                             >
-                                                <Feather name="plus" size={18} color="#C87D87" />
-                                                <Text style={styles.manageBtnText}>Add New Address</Text>
+                                                <Feather name="plus" size={18} color={colors.primary} />
+                                                <Text style={[styles.manageBtnText, { color: colors.primary }]}>Add New Address</Text>
                                             </TouchableOpacity>
                                         )}
                                     </>
@@ -242,7 +244,7 @@ const styles = StyleSheet.create({
     handle: {
         width: 40,
         height: 5,
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         borderRadius: 2.5,
         alignSelf: 'center',
         marginTop: 12,
@@ -266,7 +268,7 @@ const styles = StyleSheet.create({
     searchContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F0C4CB', // 30% Blush
+        backgroundColor: '#D38C9D', // 30% Blush
         marginHorizontal: 24,
         borderRadius: 16,
         height: 52,
@@ -293,7 +295,7 @@ const styles = StyleSheet.create({
         marginLeft: 12,
         fontSize: 16,
         fontWeight: '600',
-        color: '#C87D87', // Antique Rose
+        color: '#D38C9D', // Antique Rose
         fontFamily: 'Outfit_600SemiBold',
     },
     sectionTitle: {
@@ -311,7 +313,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#F0C4CB', // Blush
+        borderBottomColor: '#D38C9D', // Blush
     },
     addressItemActive: {
         // Option highlight
@@ -320,13 +322,13 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: 20,
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 16,
     },
     iconBoxActive: {
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
     },
     addressInfo: {
         flex: 1,
@@ -348,7 +350,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#F0C4CB', // Blush
+        borderBottomColor: '#D38C9D', // Blush
     },
     predictionTitle: {
         fontSize: 16,
@@ -369,7 +371,7 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         marginTop: 8,
         borderWidth: 1.5,
-        borderColor: '#C87D87', // Antique Rose
+        borderColor: '#D38C9D', // Antique Rose
         borderRadius: 16,
         borderStyle: 'dashed',
     },
@@ -377,7 +379,7 @@ const styles = StyleSheet.create({
         marginLeft: 8,
         fontSize: 15,
         fontWeight: '700',
-        color: '#C87D87', // Antique Rose
+        color: '#D38C9D', // Antique Rose
         fontFamily: 'Outfit_700Bold',
     },
     emptyContainer: {
@@ -392,7 +394,7 @@ const styles = StyleSheet.create({
     },
     addFirstBtn: {
         marginTop: 16,
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         paddingHorizontal: 24,
         paddingVertical: 12,
         borderRadius: 30,
@@ -404,3 +406,4 @@ const styles = StyleSheet.create({
         fontFamily: 'Outfit_700Bold',
     }
 });
+

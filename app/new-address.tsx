@@ -9,7 +9,6 @@ import {
     KeyboardAvoidingView,
     Modal,
     Platform,
-    StatusBar,
     StyleSheet,
     Text,
     TextInput,
@@ -24,6 +23,9 @@ import MakiModal from '../components/MakiModal';
 import { MapView } from '../components/MapComponent';
 import { getNearbyLandmark } from '../lib/google_location';
 import { addAddress, updateAddress, useUiStore } from '../lib/ui_store';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { StatusBar } from 'expo-status-bar';
+import { Typography } from '@/constants/theme';
 
 // Geocoding Helpers (Module Level for scope stability)
 const normalize = (s: string) => s.toLowerCase().replace(/barangay|brgy|\.?\s+|[^a-z0-9]/gi, '').trim();
@@ -138,6 +140,7 @@ export default function NewAddressScreen() {
     const params = useLocalSearchParams<{ id?: string }>();
     const { addresses } = useUiStore();
     const insets = useSafeAreaInsets();
+    const { colors, isDark } = useAppTheme();
     const mapRef = useRef<RNMapView>(null);
     const isEditing = !!params.id;
 
@@ -197,8 +200,6 @@ export default function NewAddressScreen() {
     }, []);
 
     useEffect(() => {
-        // Keep full address aligned with parsed parts, while removing plus codes.
-        // If fallback formatter already produced a landmark-first label, do not overwrite it.
         if (isFallbackLabel) {
             return;
         }
@@ -208,7 +209,6 @@ export default function NewAddressScreen() {
         if (parts.length > 0) {
             const composed = parts.join(', ');
             setFullAddress((prev) => {
-                // Preserve an existing fallback landmark label if it is already more descriptive.
                 if (isFallbackLabel && clean(prev).length > clean(composed).length) {
                     return prev;
                 }
@@ -236,7 +236,6 @@ export default function NewAddressScreen() {
                 const coord = { latitude: lat, longitude: lon };
 
                 setMarkerCoord(coord);
-                // Smoothly focus on the existing address
                 setTimeout(() => {
                     mapRef.current?.animateToRegion({
                         ...coord,
@@ -395,7 +394,6 @@ export default function NewAddressScreen() {
 
     const reverseGeocode = async (latitude: number, longitude: number, passedName?: string, deepDetails?: any) => {
         setIsFetchingAddress(true);
-        // Master variables to accumulate the best data from all providers
         let masterStreet = '';
         let masterBarangay = '';
         let masterSubdiv = '';
@@ -405,7 +403,6 @@ export default function NewAddressScreen() {
         let nearbyEstablishment = '';
 
         try {
-            // LAYER 1: Google Maps (Primary Structure)
             const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
             if (apiKey) {
                 try {
@@ -438,7 +435,6 @@ export default function NewAddressScreen() {
                 } catch (gErr) { console.log("Google Layer Failed:", gErr); }
             }
 
-            // LAYER 2: OpenStreetMap (Street & Subdivision Specialist)
             if (!masterStreet || !masterSubdiv) {
                 try {
                     const osmResponse = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`, {
@@ -462,7 +458,6 @@ export default function NewAddressScreen() {
                 } catch (osmErr) { console.log("OSM Layer Failed:", osmErr); }
             }
 
-            // LAYER 3: BigDataCloud (Administrative Specialist)
             if (!masterBarangay || !masterCity) {
                 try {
                     const bdcResponse = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
@@ -480,7 +475,6 @@ export default function NewAddressScreen() {
                 } catch (bdcErr) { console.log("BDC Layer Failed:", bdcErr); }
             }
 
-            // LAYER 4: Expo Native (Final Street Fallback)
             if (!masterStreet) {
                 try {
                     const addressArrs = await Location.reverseGeocodeAsync({ latitude, longitude });
@@ -497,7 +491,6 @@ export default function NewAddressScreen() {
                 } catch (expoErr) { console.log("Expo Layer Failed:", expoErr); }
             }
 
-            // FINAL STEP: Process Search Selection or Deep Details
             if (deepDetails) {
                 if (deepDetails.street) masterStreet = deepDetails.street;
                 if (deepDetails.barangay) masterBarangay = deepDetails.barangay;
@@ -522,11 +515,10 @@ export default function NewAddressScreen() {
                 }
             }
 
-            // Cleanup: Avoid duplicating Barangay or City into Subdivision
             if (masterSubdiv && !isSubdivKeyword(masterSubdiv) && (normalize(masterSubdiv) === normalize(masterBarangay) || normalize(masterSubdiv) === normalize(masterCity))) {
                 masterSubdiv = '';
             }
-            if (masterSubdiv && /^[A-Z0-9]{2,8}\+[A-Z0-9]{2}/i.test(masterSubdiv)) masterSubdiv = ''; // Plus Code cleanup
+            if (masterSubdiv && /^[A-Z0-9]{2,8}\+[A-Z0-9]{2}/i.test(masterSubdiv)) masterSubdiv = '';
             if (!isSubdivKeyword(masterSubdiv)) masterSubdiv = '';
             if (masterStreet && !isStreetKeyword(masterStreet)) {
                 const streetNorm = normalize(masterStreet);
@@ -535,7 +527,6 @@ export default function NewAddressScreen() {
                 }
             }
 
-            // If there is no street at the exact pin, use nearest establishment within 100m.
             if (!clean(masterStreet)) {
                 nearbyEstablishment = await fetchNearbyEstablishment(latitude, longitude);
                 if (!masterSubdiv && nearbyEstablishment) {
@@ -549,7 +540,6 @@ export default function NewAddressScreen() {
             const safeCity = sanitizeAddressPart(masterCity);
             const safeProvince = sanitizeAddressPart(masterProvince);
 
-            // COMMIT ALL RESULTS
             setBarangay(safeBarangay);
             setStreet(safeStreet);
             setSubdivision(safeSubdiv);
@@ -620,7 +610,6 @@ export default function NewAddressScreen() {
             const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
             if (apiKey) {
-                // Use Google Places TextSearch with widened Location Biasing (20km)
                 const bias = `circle:20000@${markerCoord.latitude},${markerCoord.longitude}`;
                 const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&region=ph&locationbias=${bias}&key=${apiKey}`;
 
@@ -641,7 +630,6 @@ export default function NewAddressScreen() {
                 }
             }
 
-            // Fallback: Photon API
             const response = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(searchQuery)}&lat=${markerCoord.latitude}&lon=${markerCoord.longitude}&limit=15`);
             if (response.ok) {
                 const data = await response.json();
@@ -749,6 +737,14 @@ export default function NewAddressScreen() {
 
         setShowConfirmSaveModal(false);
         setShowSavedModal(true);
+
+        // Auto-close and return to previous screen
+        setTimeout(() => {
+            setShowSavedModal(false);
+            setTimeout(() => {
+                router.back();
+            }, 400);
+        }, 1800);
     };
 
     const pinnedDetailParts = uniqueNonEmpty([subdivision, street, barangay, city, province]);
@@ -780,8 +776,8 @@ export default function NewAddressScreen() {
         : 0;
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor="#EBEBEB" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar style={isDark ? 'light' : 'dark'} />
 
             <MapView
                 ref={mapRef}
@@ -793,203 +789,187 @@ export default function NewAddressScreen() {
             />
 
             {isLoadingLocation && (
-                <View style={styles.mapLoadingOverlay}>
-                    <ActivityIndicator size="large" color="#FF5800" />
+                <View style={[styles.mapLoadingOverlay, { backgroundColor: colors.surface + 'CC' }]}>
+                    <ActivityIndicator size="large" color={colors.primary} />
                 </View>
             )}
 
-            <View style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backPlainBtn} activeOpacity={0.85}>
-                    <Feather name="arrow-left" size={20} color="#2C2C2C" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={styles.searchBar}
-                    activeOpacity={0.9}
-                    onPress={() => setIsSearchModalVisible(true)}
-                >
-                    <Feather name="map-pin" size={16} color="#9CA3AF" />
-                    <Text style={styles.searchBarText}>Search for an address</Text>
-                </TouchableOpacity>
-            </View>
-
-            <View style={styles.centerPinWrap} pointerEvents="box-none">
-                <TouchableOpacity
-                    style={styles.selectDeliveryChipOuter}
-                    activeOpacity={0.9}
-                    disabled={!fullAddress || isFetchingAddress}
-                    onPress={handleSelectDeliveryAddress}
-                >
-                    <View style={styles.selectDeliveryChip}>
-                        <Text style={styles.selectDeliveryChipText}>Select Delivery Address</Text>
-                    </View>
-                </TouchableOpacity>
-
-                <View style={styles.pinPulse} />
-                <View style={styles.pinDot}>
-                    <Ionicons name="location-sharp" size={26} color="#FF7A00" />
-                </View>
-            </View>
-
-            <TouchableOpacity
-                style={[styles.gpsFloatingBtn, { bottom: Math.max(insets.bottom, 12) + 216 }]}
-                onPress={getCurrentLocation}
-                activeOpacity={0.85}
-                disabled={isLoadingLocation}
+            {/* Back Button Overlay */}
+            <TouchableOpacity 
+                style={[styles.backOverlayBtn, { backgroundColor: colors.surface }]} 
+                onPress={() => router.back()}
             >
-                <Feather name="crosshair" size={18} color="#4B5563" />
+                <Feather name="arrow-left" size={24} color={colors.heading} />
             </TouchableOpacity>
 
-            <KeyboardAvoidingView
-                pointerEvents="box-none"
-                style={styles.bottomPanelContainer}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            {/* Search Bar Overlay */}
+            <TouchableOpacity 
+                style={[styles.searchOverlayBtn, { backgroundColor: colors.surface }]}
+                onPress={() => setIsSearchModalVisible(true)}
             >
-                <View style={[styles.bottomPanel, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}>
-                    <View style={styles.bottomTitleRow}>
-                        <Ionicons name="location-outline" size={16} color="#F07A2A" />
-                        <Text style={styles.bottomTitle}>Select delivery location</Text>
-                    </View>
-                    <Text style={styles.bottomSubText}>Pin your exact spot on the map for accurate delivery.</Text>
-                    <View style={styles.bottomNoteRow}>
-                        <Ionicons name="information-circle-outline" size={16} color="#9CA3AF" />
-                        <Text style={styles.bottomNoteText}>Your order will be delivered to the pinned location.</Text>
-                    </View>
+                <Feather name="search" size={20} color={colors.primary} />
+                <Text style={[styles.searchPlaceholderText, { color: colors.text }]}>Search for a location...</Text>
+            </TouchableOpacity>
 
-                    <LocationCard
-                        landmark={pinTitle || 'Pinned Location'}
-                        address={livePinLabel || pinDetailLine || 'Pin your exact spot on the map.'}
-                        distanceText={
-                            distanceFromUserMeters > 0
-                                ? `${distanceFromUserMeters} m away from your location`
-                                : 'Detecting exact distance...'
-                        }
-                        buttonText="Select Address"
-                        selected={hasSelectedPin}
-                        disabled={!fullAddress || isFetchingAddress}
-                        onPress={handleSelectDeliveryAddress}
-                    />
+            {/* Center Pin Indicator (Visual Only) */}
+            <View style={styles.pinIndicatorContainer} pointerEvents="none">
+                <View style={[styles.pinIconContainer, { shadowColor: colors.primary }]}>
+                    <View style={[styles.pinCircle, { backgroundColor: colors.primary }]}>
+                        <Ionicons name="location-sharp" size={24} color="#FFFFFF" />
+                    </View>
+                    <View style={[styles.pinStick, { backgroundColor: colors.primary }]} />
+                </View>
+            </View>
 
-                    <View style={styles.bottomDivider} />
-                    <TouchableOpacity
-                        style={[
-                            styles.detailsBtn,
-                            (!hasSelectedPin || isFetchingAddress) && styles.detailsBtnDisabled
-                        ]}
-                        disabled={!hasSelectedPin || isFetchingAddress}
-                        onPress={handleAddDetails}
-                    >
-                        <Text
-                            style={[
-                                styles.detailsBtnText,
-                                (!hasSelectedPin || isFetchingAddress) && styles.detailsBtnTextDisabled
-                            ]}
-                        >
-                            Add Details
+            {/* Bottom Panel */}
+            <View style={[styles.bottomPanel, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 16) }]}>
+                <View style={styles.panelHandle} />
+                
+                <View style={styles.locationHeader}>
+                    <View style={[styles.locationIconCircle, { backgroundColor: colors.primary + '15' }]}>
+                        <Ionicons name="location" size={24} color={colors.primary} />
+                    </View>
+                    <View style={styles.locationTitleBox}>
+                        <Text style={[styles.locationTitle, { color: colors.heading }]} numberOfLines={1}>
+                            {pinTitle}
                         </Text>
+                        <Text style={[styles.locationSubtitle, { color: colors.text }]} numberOfLines={2}>
+                            {pinDetailLine}
+                        </Text>
+                    </View>
+                </View>
+
+                {distanceFromUserMeters > 0 && (
+                    <View style={[styles.distanceBadge, { backgroundColor: colors.surface }]}>
+                        <MaterialIcons name="directions-walk" size={12} color={colors.text} />
+                        <Text style={[styles.distanceText, { color: colors.text }]}>{distanceFromUserMeters}m from you</Text>
+                    </View>
+                )}
+
+                <View style={styles.actionRow}>
+                    <TouchableOpacity 
+                        style={[styles.myLocationBtn, { backgroundColor: colors.surface }]}
+                        onPress={getCurrentLocation}
+                        activeOpacity={0.7}
+                    >
+                        <MaterialIcons name="my-location" size={22} color={colors.primary} />
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                        style={[styles.selectBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, (isFetchingAddress || !fullAddress) && { opacity: 0.7 }]}
+                        onPress={hasSelectedPin ? handleAddDetails : handleSelectDeliveryAddress}
+                        disabled={isFetchingAddress || !fullAddress}
+                        activeOpacity={0.85}
+                    >
+                        {isFetchingAddress ? (
+                            <ActivityIndicator color="#FFFFFF" size="small" />
+                        ) : (
+                            <Text style={styles.selectBtnText}>
+                                {hasSelectedPin ? 'Add Delivery Details' : 'Select Delivery Address'}
+                            </Text>
+                        )}
                     </TouchableOpacity>
                 </View>
-            </KeyboardAvoidingView>
+            </View>
 
-            <Modal 
-                visible={isSearchModalVisible} 
-                animationType="slide" 
-                transparent={false}
-                presentationStyle="fullScreen"
-                statusBarTranslucent={true}
+            {/* Search Modal */}
+            <Modal
+                visible={isSearchModalVisible}
+                animationType="fade"
+                transparent={true}
+                onRequestClose={() => setIsSearchModalVisible(false)}
             >
-                <SafeAreaView style={styles.container}>
-                    <View style={styles.searchHeader}>
-                        <TouchableOpacity onPress={() => setIsSearchModalVisible(false)} style={styles.backBtn} activeOpacity={0.8}>
-                            <Feather name="arrow-left" size={24} color="#2C2C2C" />
-                        </TouchableOpacity>
-                        <TextInput
-                            style={styles.searchInput}
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                            placeholder="Search your location..."
-                            returnKeyType="search"
-                            onSubmitEditing={searchLocation}
-                            autoFocus
-                        />
-                        <TouchableOpacity onPress={searchLocation} style={styles.searchIconBtn}>
-                            <Feather name="search" size={20} color="#FF5800" />
-                        </TouchableOpacity>
-                    </View>
+                <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+                    <SafeAreaView style={[styles.searchModalContent, { backgroundColor: colors.background }]}>
+                        <View style={[styles.searchHeader, { borderBottomColor: colors.primary + '0A' }]}>
+                            <TouchableOpacity onPress={() => setIsSearchModalVisible(false)} style={styles.closeSearchBtn}>
+                                <Feather name="chevron-left" size={24} color={colors.heading} />
+                            </TouchableOpacity>
+                            <View style={[styles.searchInputBox, { backgroundColor: colors.surface }]}>
+                                <Feather name="search" size={20} color={colors.primary} />
+                                <TextInput
+                                    style={[styles.searchInput, { color: colors.heading }]}
+                                    placeholder="Search location..."
+                                    placeholderTextColor={colors.text + '80'}
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                    autoFocus
+                                />
+                                {searchQuery.length > 0 && (
+                                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                        <Ionicons name="close-circle" size={20} color={colors.text} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        </View>
 
-                    {isSearching ? (
-                        <ActivityIndicator size="large" color="#FF5800" style={{ marginTop: 40 }} />
-                    ) : (
-                        <KeyboardAvoidingView
-                            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                            style={{ flex: 1 }}
-                        >
+                        {isSearching ? (
+                            <View style={styles.searchLoading}>
+                                <ActivityIndicator color={colors.primary} size="large" />
+                            </View>
+                        ) : (
                             <FlatList
                                 data={searchResults}
-                                keyExtractor={(item) => item.place_id.toString()}
-                                contentContainerStyle={styles.searchResults}
-                                keyboardShouldPersistTaps="handled"
-                                ListEmptyComponent={
-                                    searchQuery.length > 0 ? (
-                                        <View style={styles.searchEmpty}>
-                                            <Text style={styles.searchEmptyText}>No locations found. Press search or try different keywords.</Text>
-                                        </View>
-                                    ) : null
-                                }
+                                keyExtractor={(item) => item.place_id}
+                                contentContainerStyle={styles.resultsList}
                                 renderItem={({ item }) => (
-                                    <TouchableOpacity
-                                        style={styles.searchResultItem}
+                                    <TouchableOpacity 
+                                        style={[styles.resultItem, { borderBottomColor: colors.primary + '0A' }]}
                                         onPress={() => handleSelectSearchResult(item.place_id, item.lat, item.lon, item.name, item.display_name)}
-                                        activeOpacity={0.7}
                                     >
-                                        <View style={styles.searchResultIcon}>
-                                            <Ionicons name="location-outline" size={20} color="#6B7280" />
+                                        <View style={[styles.resultIconBox, { backgroundColor: colors.primary + '15' }]}>
+                                            <Ionicons name="location-outline" size={20} color={colors.primary} />
                                         </View>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={styles.searchResultName} numberOfLines={1}>
-                                                {item.name || item.display_name.split(',')[0]}
-                                            </Text>
-                                            <Text style={styles.searchResultAddress} numberOfLines={2}>
-                                                {item.display_name}
-                                            </Text>
+                                        <View style={styles.resultTextBox}>
+                                            <Text style={[styles.resultName, { color: colors.heading }]}>{item.name}</Text>
+                                            <Text style={[styles.resultAddress, { color: colors.text }]} numberOfLines={1}>{item.display_name}</Text>
                                         </View>
                                     </TouchableOpacity>
                                 )}
+                                ListEmptyComponent={
+                                    searchQuery.length > 1 ? (
+                                        <View style={styles.emptySearch}>
+                                            <Text style={[styles.emptySearchText, { color: colors.text }]}>No locations found</Text>
+                                        </View>
+                                    ) : null
+                                }
                             />
-                        </KeyboardAvoidingView>
-                    )}
-                </SafeAreaView>
+                        )}
+                    </SafeAreaView>
+                </View>
             </Modal>
 
+            {/* Confirm Save Modal */}
             <MakiModal
                 visible={showConfirmSaveModal}
                 type="warning"
-                title="Save This Delivery Pin?"
-                message="This will save your currently selected pinned location as a delivery address."
-                confirmText="Save Address"
-                cancelText="Review Again"
-                onCancel={() => setShowConfirmSaveModal(false)}
+                title={isEditing ? "Update Address?" : "Save Address?"}
+                message={`Do you want to ${isEditing ? 'update' : 'save'} this address to your profile?\n\n${selectedPinAddress}`}
+                confirmText={isEditing ? "Update" : "Save"}
+                cancelText="Not yet"
                 onConfirm={confirmAddDetails}
+                onCancel={() => setShowConfirmSaveModal(false)}
             />
 
+            {/* Saved Success Modal */}
             <MakiModal
                 visible={showSavedModal}
                 type="success"
-                title="Address Saved"
-                message="Your pinned delivery location has been saved successfully."
-                onConfirm={() => {
-                    setShowSavedModal(false);
-                    router.back();
-                }}
+                title={isEditing ? "Address Updated" : "Address Saved"}
+                message={isEditing ? "Your delivery address has been updated successfully." : "Your new delivery address has been added to your profile."}
+                showFooter={false}
+                onConfirm={() => {}}
             />
 
+            {/* Duplicate Modal */}
             <MakiModal
                 visible={showDuplicateModal}
                 type="warning"
                 title="Duplicate Address"
-                message="This pinned location is already in your saved addresses."
+                message="This address is already in your address book."
+                confirmText="Understood"
                 onConfirm={() => setShowDuplicateModal(false)}
             />
-
         </SafeAreaView>
     );
 }
@@ -997,391 +977,251 @@ export default function NewAddressScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#ECEEEF',
     },
     map: {
-        ...StyleSheet.absoluteFillObject,
+        flex: 1,
     },
     mapLoadingOverlay: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(255, 255, 255, 0.45)',
         justifyContent: 'center',
         alignItems: 'center',
+        zIndex: 100,
     },
-    topOverlay: {
+    backOverlayBtn: {
         position: 'absolute',
-        top: 0,
-        left: 8,
-        right: 8,
-        flexDirection: 'row',
+        top: Platform.OS === 'ios' ? 60 : 40,
+        left: 20,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        justifyContent: 'center',
         alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+        elevation: 5,
         zIndex: 10,
     },
-    backPlainBtn: {
-        width: 34,
-        height: 34,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 6,
-    },
-    searchBar: {
-        flex: 1,
+    searchOverlayBtn: {
+        position: 'absolute',
+        top: Platform.OS === 'ios' ? 60 : 40,
+        left: 80,
+        right: 20,
         height: 48,
-        borderRadius: 12,
-        backgroundColor: '#FFFFFF',
-        borderWidth: 1,
-        borderColor: '#DCDCDC',
+        borderRadius: 24,
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 14,
+        paddingHorizontal: 16,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 6,
-        elevation: 2,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+        elevation: 5,
+        zIndex: 10,
     },
-    searchBarText: {
-        marginLeft: 10,
-        fontSize: 16,
-        color: '#9B8C82',
-        flex: 1,
-    },
-    centerPinWrap: {
-        position: 'absolute',
-        top: '31%',
-        left: 0,
-        right: 0,
-        alignItems: 'center',
-    },
-    selectDeliveryChipOuter: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 14,
-        paddingHorizontal: 8,
-        paddingVertical: 8,
-        marginBottom: 14,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 3,
-        elevation: 2,
-    },
-    selectDeliveryChip: {
-        backgroundColor: '#F97316',
-        borderRadius: 16,
-        paddingHorizontal: 18,
-        paddingVertical: 8,
-    },
-    selectDeliveryChipText: {
-        color: '#FFFFFF',
+    searchPlaceholderText: {
         fontSize: 15,
-        fontWeight: '700',
+        marginLeft: 10,
+        fontFamily: Typography.body,
     },
-    pinPulse: {
-        width: 170,
-        height: 170,
-        borderRadius: 85,
-        backgroundColor: 'rgba(82, 124, 178, 0.22)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    pinDot: {
-        position: 'absolute',
-        top: '58%',
-        transform: [{ translateY: -14 }],
-    },
-    gpsFloatingBtn: {
-        position: 'absolute',
-        right: 18,
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#FFFFFF',
+    pinIndicatorContainer: {
+        ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 4,
-        elevation: 3,
+        zIndex: 5,
     },
-    bottomPanelContainer: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-    },
-    bottomPanel: {
-        backgroundColor: '#FFFFFF',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        paddingHorizontal: 20,
-        paddingTop: 18,
-        minHeight: 260,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.08,
+    pinIconContainer: {
+        alignItems: 'center',
+        marginBottom: 40, // Offset to point the tip at center
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.3,
         shadowRadius: 8,
-        elevation: 6,
+        elevation: 10,
     },
-    bottomTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 2,
-    },
-    bottomTitle: {
-        marginLeft: 6,
-        fontSize: 20,
-        fontWeight: '700',
-        color: '#2F211A',
-    },
-    bottomSubText: {
-        marginTop: 8,
-        fontSize: 14,
-        color: '#7A6960',
-        lineHeight: 20,
-    },
-    bottomNoteRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 10,
-    },
-    bottomNoteText: {
-        marginLeft: 6,
-        fontSize: 13,
-        color: '#8A7A71',
-    },
-    fetchingText: {
-        marginTop: 8,
-        fontSize: 13,
-        color: '#FF5800',
-        fontWeight: '600',
-    },
-    pinDetailsCard: {
-        marginTop: 12,
-        padding: 14,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#D9D9D9',
-        backgroundColor: '#FFFFFF',
-    },
-    pinDetailsCardActive: {
-        borderColor: '#CFCFCF',
-        backgroundColor: '#FFFFFF',
-    },
-    pinHeaderRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        marginBottom: 8,
-    },
-    pinTitleIconWrap: {
-        marginTop: 1,
-        marginRight: 8,
-    },
-    pinTitleText: {
-        flex: 1,
-        fontSize: 20,
-        lineHeight: 28,
-        fontWeight: '700',
-        color: '#2F2F35',
-        minWidth: 0,
-    },
-    pinDetailText: {
-        fontSize: 18,
-        color: '#3C3C42',
-        lineHeight: 28,
-    },
-    pinDistanceText: {
-        marginTop: 6,
-        fontSize: 16,
-        color: '#787881',
-        lineHeight: 24,
-    },
-    pinSelectBtn: {
-        marginTop: 16,
-        borderWidth: 2,
-        borderColor: '#96969B',
-        borderRadius: 999,
-        height: 58,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        backgroundColor: '#FFFFFF',
-    },
-    pinSelectBtnDisabled: {
-        opacity: 0.45,
-    },
-    pinSelectBtnText: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#2C2C2C',
-    },
-    bottomDivider: {
-        marginTop: 10,
-        borderTopWidth: 1,
-        borderTopColor: '#ECDDD2',
-    },
-    detailsBtn: {
-        marginTop: 10,
+    pinCircle: {
+        width: 50,
         height: 50,
         borderRadius: 25,
-        backgroundColor: '#F97316',
-        alignItems: 'center',
         justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 2,
     },
-    detailsBtnDisabled: {
-        backgroundColor: '#F3D4BF',
+    pinStick: {
+        width: 3,
+        height: 20,
+        marginTop: -2,
     },
-    detailsBtnText: {
-        fontSize: 17,
-        color: '#FFFFFF',
-        fontWeight: '700',
+    bottomPanel: {
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        paddingHorizontal: 24,
+        paddingTop: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+        elevation: 20,
     },
-    detailsBtnTextDisabled: {
-        color: '#D8A987',
+    panelHandle: {
+        width: 40,
+        height: 5,
+        backgroundColor: '#E5E7EB',
+        borderRadius: 3,
+        alignSelf: 'center',
+        marginBottom: 20,
     },
-    formScrollContent: {
-        paddingBottom: 12,
+    locationHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 16,
+        marginBottom: 16,
     },
-    detailsHeaderRow: {
+    locationIconCircle: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    locationTitleBox: {
+        flex: 1,
+    },
+    locationTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        fontFamily: Typography.h1,
+        marginBottom: 4,
+    },
+    locationSubtitle: {
+        fontSize: 14,
+        fontFamily: Typography.body,
+        lineHeight: 20,
+    },
+    distanceBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 6,
+        alignSelf: 'flex-start',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 20,
+        gap: 4,
+        marginBottom: 20,
+        marginLeft: 64,
     },
-    minimizeBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        backgroundColor: '#F3F4F6',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    inputGroup: {
-        marginBottom: 14,
-    },
-    label: {
+    distanceText: {
         fontSize: 12,
         fontWeight: '600',
-        color: '#6B7280',
-        marginBottom: 6,
     },
-    input: {
-        backgroundColor: '#F8FAFC',
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-        borderRadius: 12,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        fontSize: 14,
-        color: '#1F2937',
-    },
-    inputDisabled: {
-        backgroundColor: '#F1F5F9',
-        color: '#9CA3AF',
-    },
-    row: {
+    actionRow: {
         flexDirection: 'row',
-    },
-    halfInputLeft: {
-        flex: 1,
-        marginRight: 8,
-    },
-    halfInputRight: {
-        flex: 1,
-        marginLeft: 8,
-    },
-    textArea: {
-        height: 84,
-        textAlignVertical: 'top',
-        paddingTop: 10,
-    },
-    saveBtn: {
+        gap: 12,
         marginTop: 4,
-        backgroundColor: '#D70022',
-        height: 52,
-        borderRadius: 26,
+    },
+    myLocationBtn: {
+        width: 56,
+        height: 56,
+        borderRadius: 16,
         justifyContent: 'center',
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
     },
-    saveBtnDisabled: {
-        backgroundColor: '#E5E7EB',
+    selectBtn: {
+        flex: 1,
+        height: 56,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 10,
+        elevation: 5,
     },
-    saveBtnText: {
+    selectBtnText: {
         color: '#FFFFFF',
-        fontSize: 17,
-        fontWeight: '700',
+        fontSize: 16,
+        fontWeight: '800',
+        fontFamily: Typography.button,
+    },
+    modalOverlay: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    searchModalContent: {
+        flex: 1,
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
     },
     searchHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 20,
+        paddingHorizontal: 16,
         paddingVertical: 12,
         borderBottomWidth: 1,
-        borderBottomColor: '#EDE0D7',
-        backgroundColor: '#FFF9F5',
+        gap: 12,
     },
-    backBtn: {
-        width: 40,
-        height: 40,
-        justifyContent: 'center',
+    closeSearchBtn: {
+        padding: 4,
+    },
+    searchInputBox: {
+        flex: 1,
+        height: 48,
+        borderRadius: 24,
+        flexDirection: 'row',
         alignItems: 'center',
+        paddingHorizontal: 16,
     },
     searchInput: {
         flex: 1,
-        height: 44,
-        backgroundColor: '#FFF3EA',
-        borderRadius: 12,
-        paddingHorizontal: 16,
-        fontSize: 15,
-        marginHorizontal: 12,
-        color: '#2F211A',
+        marginLeft: 10,
+        fontSize: 16,
+        fontFamily: Typography.body,
     },
-    searchIconBtn: {
-        width: 40,
-        height: 40,
+    searchLoading: {
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    searchResults: {
-        paddingHorizontal: 20,
-        paddingVertical: 10,
+    resultsList: {
+        paddingHorizontal: 16,
+        paddingTop: 12,
     },
-    searchResultItem: {
+    resultItem: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#EFE4DC',
+        gap: 16,
     },
-    searchResultIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#FFF3EA',
+    resultIconBox: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
     },
-    searchResultName: {
-        fontSize: 15,
+    resultTextBox: {
+        flex: 1,
+    },
+    resultName: {
+        fontSize: 16,
         fontWeight: '700',
-        color: '#1F2937',
+        fontFamily: Typography.h1,
+        marginBottom: 2,
     },
-    searchResultAddress: {
-        fontSize: 12,
-        color: '#6B7280',
-        marginTop: 2,
+    resultAddress: {
+        fontSize: 13,
+        fontFamily: Typography.body,
     },
-    searchEmpty: {
-        marginTop: 60,
+    emptySearch: {
         alignItems: 'center',
-        paddingHorizontal: 40,
+        paddingTop: 40,
     },
-    searchEmptyText: {
-        textAlign: 'center',
-        color: '#9CA3AF',
-        fontSize: 14,
-        lineHeight: 20,
+    emptySearchText: {
+        fontSize: 15,
+        fontFamily: Typography.body,
     },
 });
+
+import { MaterialIcons } from '@expo/vector-icons';

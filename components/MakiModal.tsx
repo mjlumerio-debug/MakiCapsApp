@@ -8,6 +8,8 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { Typography } from '@/constants/theme';
 
 type MakiModalType = 'success' | 'delete' | 'warning';
 
@@ -20,6 +22,7 @@ type MakiModalProps = {
     onCancel?: () => void;
     confirmText?: string;
     cancelText?: string;
+    showFooter?: boolean;
 };
 
 export default function MakiModal({
@@ -31,7 +34,9 @@ export default function MakiModal({
     onCancel,
     confirmText = 'Okay',
     cancelText = 'Cancel',
+    showFooter = true,
 }: MakiModalProps) {
+    const { colors } = useAppTheme();
     if (!visible) return null;
 
     const isSuccess = type === 'success';
@@ -51,12 +56,12 @@ export default function MakiModal({
                 <Animated.View 
                     entering={ZoomIn} 
                     exiting={ZoomOut}
-                    style={styles.card}
+                    style={[styles.card, { backgroundColor: colors.surface }]}
                 >
                     <View style={[
                         styles.iconCircle, 
-                        isSuccess ? styles.successIconBg : 
-                        type === 'warning' ? styles.warningIconBg : styles.deleteIconBg
+                        isSuccess ? [styles.successIconBg, { backgroundColor: '#1DB954', shadowColor: '#1DB954' }] : 
+                        type === 'warning' ? [styles.warningIconBg, { backgroundColor: colors.primary, shadowColor: colors.primary }] : [styles.deleteIconBg, { backgroundColor: '#EF4444', shadowColor: '#EF4444' }]
                     ]}>
                         {isSuccess ? (
                             <Ionicons name="checkmark" size={32} color="#FFFFFF" />
@@ -67,27 +72,33 @@ export default function MakiModal({
                         )}
                     </View>
 
-                    <Text style={styles.title}>{title}</Text>
-                    <Text style={styles.message}>{message}</Text>
+                    <Text style={[styles.title, { color: colors.heading }]}>{title}</Text>
+                    <Text style={[styles.message, { color: colors.text }]}>{message}</Text>
 
-                    <View style={styles.buttonRow}>
-                        {onCancel && (
+                    {showFooter && (
+                        <View style={styles.buttonRow}>
+                            {onCancel && (
+                                <TouchableOpacity 
+                                    style={[styles.cancelBtn, { backgroundColor: colors.background }]} 
+                                    onPress={onCancel}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={[styles.cancelBtnText, { color: colors.text }]}>{cancelText}</Text>
+                                </TouchableOpacity>
+                            )}
                             <TouchableOpacity 
-                                style={styles.cancelBtn} 
-                                onPress={onCancel}
-                                activeOpacity={0.7}
+                                style={[
+                                    styles.confirmBtn, 
+                                    isSuccess ? [styles.successBtn, { backgroundColor: colors.primary }] : 
+                                    type === 'warning' ? [styles.confirmBtn, { backgroundColor: colors.primary }] : [styles.deleteBtn, { backgroundColor: '#EF4444' }]
+                                ]} 
+                                onPress={onConfirm}
+                                activeOpacity={0.8}
                             >
-                                <Text style={styles.cancelBtnText}>{cancelText}</Text>
+                                <Text style={styles.confirmBtnText}>{confirmText}</Text>
                             </TouchableOpacity>
-                        )}
-                        <TouchableOpacity 
-                            style={[styles.confirmBtn, isSuccess ? styles.successBtn : styles.deleteBtn]} 
-                            onPress={onConfirm}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={styles.confirmBtnText}>{confirmText}</Text>
-                        </TouchableOpacity>
-                    </View>
+                        </View>
+                    )}
                 </Animated.View>
             </Animated.View>
         </Modal>
@@ -97,7 +108,7 @@ export default function MakiModal({
 const styles = StyleSheet.create({
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: 'rgba(0,0,0,0.6)',
         justifyContent: 'center',
         alignItems: 'center',
         padding: 24,
@@ -105,7 +116,6 @@ const styles = StyleSheet.create({
     card: {
         width: '100%',
         maxWidth: 320,
-        backgroundColor: '#FFFFFF',
         borderRadius: 24,
         padding: 24,
         alignItems: 'center',
@@ -124,39 +134,32 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     successIconBg: {
-        backgroundColor: '#1DB954', // Vibrant Green
-        shadowColor: '#1DB954',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
     },
     deleteIconBg: {
-        backgroundColor: '#EF4444', // Red for delete
-        shadowColor: '#EF4444',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
     },
     warningIconBg: {
-        backgroundColor: '#FF9500', // Orange for warning
-        shadowColor: '#FF9500',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
     },
     title: {
         fontSize: 20,
-        fontWeight: '800',
-        color: '#2C2C2C',
+        fontFamily: Typography.h1,
         marginBottom: 8,
         textAlign: 'center',
     },
     message: {
         fontSize: 14,
-        color: '#8A8A8A',
+        fontFamily: Typography.body,
         textAlign: 'center',
         lineHeight: 20,
-        marginBottom: 28,
+        marginBottom: 8,
         paddingHorizontal: 12,
     },
     buttonRow: {
@@ -167,15 +170,13 @@ const styles = StyleSheet.create({
     cancelBtn: {
         flex: 1,
         height: 50,
-        backgroundColor: '#F5F5F5',
         borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
     },
     cancelBtnText: {
         fontSize: 15,
-        fontWeight: '700',
-        color: '#8A8A8A',
+        fontFamily: Typography.button,
     },
     confirmBtn: {
         flex: 1,
@@ -186,14 +187,14 @@ const styles = StyleSheet.create({
         elevation: 2,
     },
     successBtn: {
-        backgroundColor: '#D94F3D', // Branded Rich Red/Orange
+        // backgroundColor handled inline
     },
     deleteBtn: {
-        backgroundColor: '#EF4444',
+        // backgroundColor handled inline
     },
     confirmBtnText: {
         fontSize: 15,
-        fontWeight: '700',
+        fontFamily: Typography.button,
         color: '#FFFFFF',
     },
 });

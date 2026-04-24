@@ -65,6 +65,30 @@ export const fetchCurrentUser = async (): Promise<AuthUser> => {
   }
 };
 
+/**
+ * Refresh the auth token using the backend's token rotation endpoint.
+ * The old token is revoked server-side and a new one is issued.
+ */
+export const refreshToken = async (): Promise<boolean> => {
+  try {
+    const currentToken = await AsyncStorage.getItem('auth_token');
+    if (!currentToken) return false;
+
+    const response = await api.post('token/refresh');
+    const newToken = response.data?.token;
+
+    if (newToken) {
+      await AsyncStorage.setItem('auth_token', newToken);
+      console.log('[Auth] Token refreshed successfully.');
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.log('[Auth] Token refresh failed:', error instanceof Error ? error.message : error);
+    return false;
+  }
+};
+
 export const signupUser = async (payload: SignupPayload): Promise<AuthUser> => {
   try {
     const response = await api.post('register', {
@@ -79,14 +103,13 @@ export const signupUser = async (payload: SignupPayload): Promise<AuthUser> => {
 
     const data = response.data;
     const user = data.user || data;
+    const token = data.token || data.access_token;
 
-    return {
-      id: user.id || 0,
-      firstName: user.first_name || payload.firstName,
-      lastName: user.last_name || payload.lastName,
-      email: user.email || payload.email,
-      contactNumber: user.mobile_number || payload.contactNumber,
-    };
+    if (token) {
+      await AsyncStorage.setItem('auth_token', token);
+    }
+
+    return mapAuthUser(user, payload.email);
   } catch (error) {
     if (axios.isAxiosError(error) && error.response) {
       const msg = error.response.data?.message || error.response.data?.error || 'Signup failed.';
@@ -110,24 +133,36 @@ export const loginUser = async (payload: LoginPayload): Promise<AuthUser> => {
     const user = data.user || data;
     const token = data.token || data.access_token;
 
-    // Store the auth token for future authenticated requests
     if (token) {
       await AsyncStorage.setItem('auth_token', token);
     }
 
-    try {
-      return await fetchCurrentUser();
-    } catch (fetchUserError) {
-      console.error('Login succeeded but /user fetch failed, using login payload user.', fetchUserError);
-      return mapAuthUser(user, payload.email);
-    }
+    // Return the user from the login response directly
+    // This avoids a race condition where fetchCurrentUser might fail if the token is still being persisted
+    return mapAuthUser(user, payload.email);
   } catch (error) {
     if (axios.isAxiosError(error) && error.response) {
       const status = error.response.status;
+      const data = error.response.data;
+
       if (status === 401) {
         throw new Error('Invalid email or password.');
       }
-      const msg = error.response.data?.message || error.response.data?.error || 'Login failed.';
+
+      if (status === 403) {
+        const forbiddenMsg = data?.message || data?.error || 'Access denied. Your account may require verification.';
+        throw new Error(forbiddenMsg);
+      }
+
+      // Handle Laravel validation errors (422)
+      if (status === 422 && data.errors) {
+        const firstError = Object.values(data.errors)[0];
+        if (Array.isArray(firstError) && firstError.length > 0) {
+          throw new Error(firstError[0]);
+        }
+      }
+
+      const msg = data?.message || data?.error || `Login failed (Status: ${status}).`;
       throw new Error(msg);
     }
     if (axios.isAxiosError(error) && !error.response) {

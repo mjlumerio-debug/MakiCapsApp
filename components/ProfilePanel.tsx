@@ -1,11 +1,11 @@
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { fetchCurrentUser } from '@/lib/auth_api';
 import { setUserId } from '@/lib/ui_store';
 import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -25,22 +25,21 @@ type ProfilePanelProps = {
     bottomPadding: number;
 };
 
-const MenuRow = ({ iconProvider: IconProvider, iconName, title, onPress, theme, rightIcon }: any) => (
-    <TouchableOpacity style={styles.menuRow} onPress={onPress} activeOpacity={0.7}>
+const MenuRow = ({ iconProvider: IconProvider, iconName, title, onPress, colors, rightIcon }: any) => (
+    <TouchableOpacity style={[styles.menuRow, { backgroundColor: colors.surface }]} onPress={onPress} activeOpacity={0.7}>
         <View style={styles.menuLeft}>
             <View style={styles.iconContainer}>
-                <IconProvider name={iconName} size={20} color="#C87D87" />
+                <IconProvider name={iconName} size={20} color={colors.primary} />
             </View>
-            <Text style={[styles.menuText, { color: '#4A2C35' }]}>{title}</Text>
+            <Text style={[styles.menuText, { color: colors.heading }]}>{title}</Text>
         </View>
-        <Feather name={rightIcon || "chevron-right"} size={20} color="#7A5560" />
+        <Feather name={rightIcon || "chevron-right"} size={20} color={colors.text} />
     </TouchableOpacity>
 );
 
 export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
     const router = useRouter();
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors, isDark, themeMode, setThemeMode } = useAppTheme();
 
     const logoutSheetAnim = useRef(new RNAnimated.Value(0)).current;
     const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -113,9 +112,9 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
         };
     }, []);
 
-    const handleLogout = () => {
-        setUserId(null);
-        // Cart and favorites intentionally NOT cleared so items persist across logout
+    const handleLogout = async () => {
+        const { logoutUser } = await import('@/lib/ui_store');
+        await logoutUser();
         router.replace('/login');
     };
 
@@ -225,7 +224,7 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
     };
 
     return (
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
             <ScrollView
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
                 showsVerticalScrollIndicator={false}
@@ -235,52 +234,94 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                     <View style={styles.avatarContainer}>
                         <Image
                             source={require('../assets/images/chef.png')}
-                            style={styles.avatar}
+                            style={[styles.avatar, { backgroundColor: colors.surface }]}
                             contentFit="cover"
                         />
-                        <View style={styles.badgeContainer}>
-                            <MaterialIcons name="verified" size={14} color="#FFFFFF" />
+                        <View style={[styles.badgeContainer, { backgroundColor: colors.primary }]}>
+                            <MaterialIcons name="verified" size={14} color={colors.background} />
                         </View>
                     </View>
                     {isLoadingProfile ? (
-                        <ActivityIndicator size="small" color="#C87D87" style={{ marginBottom: 8 }} />
+                        <ActivityIndicator size="small" color={colors.primary} style={{ marginBottom: 8 }} />
                     ) : null}
-                    <Text style={[styles.name, { color: '#4A2C35' }]}>{displayName}</Text>
-                    <Text style={styles.email}>{displayEmail}</Text>
+                    <Text style={[styles.name, { color: colors.heading }]}>{displayName}</Text>
+                    <Text style={[styles.email, { color: colors.text }]}>{displayEmail}</Text>
                 </View>
 
                 {/* Menu items */}
                 <View style={styles.menuList}>
-                    <MenuRow iconProvider={Feather} iconName="user" title="Personal Information" onPress={() => router.push('/personal-information' as any)} theme={theme} />
+                    <MenuRow iconProvider={Feather} iconName="user" title="Personal Information" onPress={() => router.push('/personal-information' as any)} colors={colors} />
                     <MenuRow iconProvider={Feather} iconName="tag" title="My Orders" onPress={() => {
                         router.push('/my-orders');
-                    }} theme={theme} />
-                    <MenuRow iconProvider={Ionicons} iconName="location-outline" title="Addresses" onPress={() => router.push('/addresses' as any)} theme={theme} />
-                    <MenuRow iconProvider={Ionicons} iconName="wallet-outline" title="Payment Methods" onPress={() => router.push('/payment-methods' as any)} theme={theme} />
+                    }} colors={colors} />
+                    <MenuRow iconProvider={Ionicons} iconName="location-outline" title="Addresses" onPress={() => router.push('/addresses' as any)} colors={colors} />
+                    <MenuRow iconProvider={Ionicons} iconName="wallet-outline" title="Payment Methods" onPress={() => router.push('/payment-methods' as any)} colors={colors} />
                     <MenuRow
                         iconProvider={Feather}
                         iconName="settings"
                         title="Settings"
                         onPress={() => setIsSettingsExpanded(!isSettingsExpanded)}
-                        theme={theme}
+                        colors={colors}
                         rightIcon={isSettingsExpanded ? "chevron-down" : "chevron-right"}
                     />
                     {isSettingsExpanded && (
-                        <View style={styles.submenuContainer}>
-                            <TouchableOpacity style={styles.submenuRow} onPress={openChangePwdSheet} activeOpacity={0.7}>
+                        <View style={[styles.submenuContainer, { backgroundColor: colors.background }]}>
+                            <TouchableOpacity style={[styles.submenuRow, { borderBottomColor: colors.surface }]} onPress={openChangePwdSheet} activeOpacity={0.7}>
                                 <View style={styles.submenuLeft}>
-                                    <Feather name="lock" size={18} color="#4A2C35" />
-                                    <Text style={[styles.submenuText, { color: '#4A2C35' }]}>Change Password</Text>
+                                    <Feather name="lock" size={18} color={colors.heading} />
+                                    <Text style={[styles.submenuText, { color: colors.heading }]}>Change Password</Text>
                                 </View>
-                                <Feather name="chevron-right" size={18} color="#C4C4C4" />
+                                <Feather name="chevron-right" size={18} color={colors.text} />
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.submenuRow} onPress={openDeleteSheet} activeOpacity={0.7}>
+                            <TouchableOpacity style={[styles.submenuRow, { borderBottomColor: colors.surface }]} onPress={openDeleteSheet} activeOpacity={0.7}>
                                 <View style={styles.submenuLeft}>
                                     <Feather name="user-x" size={18} color="#DC2626" />
                                     <Text style={[styles.submenuText, { color: '#DC2626' }]}>Delete Account</Text>
                                 </View>
-                                <Feather name="chevron-right" size={18} color="#C4C4C4" />
+                                <Feather name="chevron-right" size={18} color={colors.text} />
                             </TouchableOpacity>
+
+                            {/* Theme Selector Section */}
+                            <View style={styles.themeSection}>
+                                <Text style={[styles.themeLabel, { color: colors.text }]}>Appearance</Text>
+                                <View style={styles.themeOptionsContainer}>
+                                    {[
+                                        { id: 'light', label: 'Light', icon: 'sunny-outline' as const },
+                                        { id: 'dark', label: 'Dark', icon: 'moon-outline' as const },
+                                        { id: 'system', label: 'System', icon: 'options-outline' as const },
+                                    ].map((item) => {
+                                        const isSelected = themeMode === item.id;
+                                        return (
+                                            <TouchableOpacity
+                                                key={item.id}
+                                                activeOpacity={0.7}
+                                                onPress={() => {
+                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                    setThemeMode(item.id as any);
+                                                }}
+                                                style={[
+                                                    styles.themeOption,
+                                                    { backgroundColor: colors.background },
+                                                    isSelected && { backgroundColor: colors.primary + '15', borderColor: colors.primary }
+                                                ]}
+                                            >
+                                                <Ionicons 
+                                                    name={item.icon} 
+                                                    size={16} 
+                                                    color={isSelected ? colors.primary : colors.text} 
+                                                />
+                                                <Text style={[
+                                                    styles.themeOptionText, 
+                                                    { color: isSelected ? colors.primary : colors.text },
+                                                    isSelected && { fontWeight: '700' }
+                                                ]}>
+                                                    {item.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </View>
                         </View>
                     )}
                     <MenuRow
@@ -288,7 +329,7 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                         iconName="log-out"
                         title="Logout"
                         onPress={openLogoutSheet}
-                        theme={theme}
+                        colors={colors}
                     />
                 </View>
             </ScrollView>
@@ -319,6 +360,8 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             style={[
                                 styles.logoutModalCard,
                                 {
+                                    backgroundColor: colors.surface,
+                                    shadowColor: colors.primary,
                                     opacity: logoutSheetAnim,
                                     transform: [
                                         {
@@ -337,29 +380,29 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                                 },
                             ]}
                         >
-                            <View style={styles.logoutIconCircle}>
-                                <Feather name="log-out" size={28} color="#C87D87" />
+                            <View style={[styles.logoutIconCircle, { backgroundColor: colors.background }]}>
+                                <Feather name="log-out" size={28} color={colors.primary} />
                             </View>
-                            <Text style={styles.logoutTitle}>Logout Session?</Text>
-                            <Text style={styles.logoutSubtitle}>
+                            <Text style={[styles.logoutTitle, { color: colors.heading }]}>Logout Session?</Text>
+                            <Text style={[styles.logoutSubtitle, { color: colors.text }]}>
                                 Are you sure you want to end your session? You can log back in later.
                             </Text>
 
                             <View style={styles.logoutButtonsRow}>
                                 <TouchableOpacity
                                     activeOpacity={0.8}
-                                    style={styles.logoutCancelButton}
+                                    style={[styles.logoutCancelButton, { backgroundColor: colors.background }]}
                                     onPress={closeLogoutSheet}
                                 >
-                                    <Text style={styles.logoutCancelText}>Cancel</Text>
+                                    <Text style={[styles.logoutCancelText, { color: colors.heading }]}>Cancel</Text>
                                 </TouchableOpacity>
 
                                 <TouchableOpacity
                                     activeOpacity={0.8}
-                                    style={styles.logoutConfirmButton}
+                                    style={[styles.logoutConfirmButton, { backgroundColor: colors.primary }]}
                                     onPress={performLogout}
                                 >
-                                    <Text style={styles.logoutConfirmText}>Confirm</Text>
+                                    <Text style={[styles.logoutConfirmText, { color: colors.background }]}>Confirm</Text>
                                 </TouchableOpacity>
                             </View>
                         </RNAnimated.View>
@@ -486,7 +529,7 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             ]}
                         >
                             <View style={[styles.logoutIconCircle, { backgroundColor: '#FEE2E2' }]}>
-                                <Feather name="mail" size={28} color="#C87D87" />
+                                <Feather name="mail" size={28} color="#D38C9D" />
                             </View>
                             <Text style={styles.logoutTitle}>Verify to Delete</Text>
                             <Text style={styles.logoutSubtitle}>
@@ -570,31 +613,31 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             ]}
                         >
                             <View style={[styles.logoutIconCircle, { backgroundColor: '#FFF0E6' }]}>
-                                <Feather name="lock" size={28} color="#C87D87" />
+                                <Feather name="lock" size={28} color="#D38C9D" />
                             </View>
                             <Text style={styles.logoutTitle}>Change Password</Text>
 
                             <View style={styles.inputContainer}>
                                 <TextInput
-                                    style={styles.modalInput}
+                                    style={[styles.modalInput, { backgroundColor: colors.background, color: colors.heading, borderColor: colors.primary }]}
                                     placeholder="Current Password"
-                                    placeholderTextColor="#9CA3AF"
+                                    placeholderTextColor={colors.text}
                                     secureTextEntry
                                     value={currentPassword}
                                     onChangeText={setCurrentPassword}
                                 />
                                 <TextInput
-                                    style={styles.modalInput}
+                                    style={[styles.modalInput, { backgroundColor: colors.background, color: colors.heading, borderColor: colors.primary }]}
                                     placeholder="New Password"
-                                    placeholderTextColor="#9CA3AF"
+                                    placeholderTextColor={colors.text}
                                     secureTextEntry
                                     value={newPassword}
                                     onChangeText={setNewPassword}
                                 />
                                 <TextInput
-                                    style={styles.modalInput}
+                                    style={[styles.modalInput, { backgroundColor: colors.background, color: colors.heading, borderColor: colors.primary }]}
                                     placeholder="Confirm New Password"
-                                    placeholderTextColor="#9CA3AF"
+                                    placeholderTextColor={colors.text}
                                     secureTextEntry
                                     value={confirmPassword}
                                     onChangeText={setConfirmPassword}
@@ -643,13 +686,13 @@ const styles = StyleSheet.create({
         width: 100,
         height: 100,
         borderRadius: 50,
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
     },
     badgeContainer: {
         position: 'absolute',
         bottom: 4,
         right: 4,
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         borderRadius: 12,
         width: 22,
         height: 22,
@@ -674,11 +717,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
         padding: 16,
         marginBottom: 12,
         borderRadius: 16,
-        shadowColor: '#C87D87',
+        shadowColor: '#D38C9D',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.04,
         shadowRadius: 8,
@@ -709,7 +752,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingVertical: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#F0C4CB', // Blush
+        borderBottomColor: '#D38C9D', // Blush
     },
     submenuLeft: {
         flexDirection: 'row',
@@ -720,20 +763,51 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '500',
     },
+    themeSection: {
+        marginTop: 16,
+        marginBottom: 8,
+    },
+    themeLabel: {
+        fontSize: 13,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+        marginBottom: 12,
+        opacity: 0.7,
+    },
+    themeOptionsContainer: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    themeOption: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+        gap: 6,
+    },
+    themeOptionText: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
     inputContainer: {
         width: '100%',
         marginBottom: 24,
         gap: 12,
     },
     modalInput: {
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 14,
         fontSize: 15,
         color: '#4A2C35', // Mauve
         borderWidth: 1,
-        borderColor: '#C87D87',
+        borderColor: '#D38C9D',
     },
     modalBackdrop: {
         flex: 1,
@@ -751,7 +825,7 @@ const styles = StyleSheet.create({
         borderRadius: 24,
         padding: 24,
         alignItems: 'center',
-        shadowColor: '#C87D87',
+        shadowColor: '#D38C9D',
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.1,
         shadowRadius: 20,
@@ -761,7 +835,7 @@ const styles = StyleSheet.create({
         width: 60,
         height: 60,
         borderRadius: 30,
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
@@ -787,7 +861,7 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 50,
         borderRadius: 14,
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -815,3 +889,4 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
     },
 });
+

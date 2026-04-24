@@ -80,6 +80,7 @@ type UiState = {
   selectedBranch: SelectedBranch | null;
   orderMode: 'delivery' | 'pickup';
   isLocationLoading: boolean;
+  sessionStatus: 'idle' | 'validating' | 'authorized' | 'expired' | 'unauthorized';
 };
 
 const initialState: UiState = {
@@ -93,6 +94,7 @@ const initialState: UiState = {
   selectedBranch: null,
   orderMode: 'delivery',
   isLocationLoading: false,
+  sessionStatus: 'idle',
 };
 
 const STORAGE_KEY_FAVORITES = 'maki_favorites';
@@ -120,12 +122,33 @@ export const setUserId = (userId: number | null): void => {
   setState((prev) => ({
     ...prev,
     userId,
+    sessionStatus: userId ? 'authorized' : 'unauthorized',
   }));
   if (userId) {
     AsyncStorage.setItem('current_user_id', String(userId)).catch(console.error);
   } else {
     AsyncStorage.removeItem('current_user_id').catch(console.error);
   }
+};
+
+export const setSessionStatus = (status: UiState['sessionStatus']): void => {
+  setState((prev) => ({ ...prev, sessionStatus: status }));
+};
+
+export const logoutUser = async (): Promise<void> => {
+  // Clear all auth-related storage
+  await Promise.all([
+    AsyncStorage.removeItem('auth_token'),
+    AsyncStorage.removeItem('current_user_id'),
+    AsyncStorage.removeItem(STORAGE_KEY_CART),
+    AsyncStorage.removeItem(STORAGE_KEY_ACTIVE_ADDRESS_ID),
+  ]);
+
+  // Reset state to initial (except maybe non-auth preferences if any)
+  setState((prev) => ({
+    ...initialState,
+    sessionStatus: 'unauthorized',
+  }));
 };
 
 export const isAddressInServiceArea = (address: Address | null | undefined): boolean => {
@@ -386,8 +409,8 @@ export const addToCart = (
     const existing = prev.cartItems.find((item) => item.id === foodId);
     const existingQty = existing?.quantity ?? 0;
     const proposedQty = existingQty + increment;
-    const hasMax = Number.isFinite(Number(maxQuantity));
-    const max = hasMax ? Math.max(0, Number(maxQuantity)) : null;
+    const hasMax = maxQuantity != null && Number.isFinite(Number(maxQuantity)) && Number(maxQuantity) > 0;
+    const max = hasMax ? Math.floor(Number(maxQuantity)) : null;
     const finalQty = max !== null ? Math.min(proposedQty, max) : proposedQty;
 
     if (max !== null && proposedQty > max) {
@@ -474,8 +497,8 @@ export const updateCartQuantity = (
     };
   }
   const normalizedTarget = Math.max(1, Math.floor(quantity));
-  const hasMax = Number.isFinite(Number(maxQuantity));
-  const max = hasMax ? Math.max(0, Number(maxQuantity)) : null;
+  const hasMax = maxQuantity != null && Number.isFinite(Number(maxQuantity)) && Number(maxQuantity) > 0;
+  const max = hasMax ? Math.floor(Number(maxQuantity)) : null;
   const finalQty = max !== null ? Math.min(normalizedTarget, max) : normalizedTarget;
   const hitMax = max !== null && normalizedTarget > max;
 

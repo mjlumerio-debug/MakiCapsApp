@@ -9,12 +9,14 @@ import {
   toggleFavorite,
   useUiStore
 } from '@/lib/ui_store';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { useBranch } from '@/state/contexts/BranchContext';
 import { useCart } from '@/state/contexts/CartContext';
 import { useLocation } from '@/state/contexts/LocationContext';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -23,7 +25,7 @@ import {
   Platform,
   Animated as RNAnimated,
   ScrollView,
-  StatusBar,
+  StatusBar as NativeStatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -62,6 +64,7 @@ const getPriceValue = (price: string): number =>
 const getCaloriesValue = (calories: string): number => Number(calories.replace(' kcal', ''));
 
 export default function HomeDashboard() {
+  const { colors, isDark } = useAppTheme();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { categories: categoryData, menuItems: products, isRefreshing } = useMenuStore();
@@ -70,7 +73,7 @@ export default function HomeDashboard() {
   const { state: cartState, dispatch: cartDispatch } = useCart();
   const { setAddress } = useAppStateFlow();
 
-  const { userId, favorites, addresses, activeAddressId, orderMode } = useUiStore();
+  const { userId, sessionStatus, favorites, addresses, activeAddressId, orderMode } = useUiStore();
   const { selectedAddress, isLocationLoading, isServiceable } = locationState;
   const { selectedBranch, isManualSelection, catalogMode } = branchState;
   const { items: cartItems } = cartState;
@@ -94,7 +97,7 @@ export default function HomeDashboard() {
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
 
   const insets = useSafeAreaInsets();
-  const topInset = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : insets.top;
+  const topInset = Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) : insets.top;
   const navBottomOffset = Math.max(insets.bottom, 12) + 20;
   const contentBottomPadding = NAV_HEIGHT + navBottomOffset + 40;
 
@@ -140,26 +143,33 @@ export default function HomeDashboard() {
       { scale: flyScale.value }
     ],
   }));
+  
+  // 🔐 AUTH GUARD
+  useEffect(() => {
+    if (sessionStatus === 'unauthorized' || (sessionStatus === 'expired' && !userId)) {
+      router.replace('/login');
+    }
+  }, [sessionStatus, userId]);
 
   // 🧠 REAL-TIME ADDRESS SYNC (The Engine Trigger)
   useEffect(() => {
+    let isMounted = true;
     const syncAddress = async () => {
       if (activeAddressId) {
         const addr = addresses.find(a => a.id === activeAddressId);
-        // Only trigger if it's different from the current engine state
-        // to avoid unnecessary re-fetches
         const hasChanged = addr && (
           addr.latitude !== selectedAddress?.latitude ||
           addr.longitude !== selectedAddress?.longitude ||
           addr.id !== selectedAddress?.id
         );
 
-        if (hasChanged) {
+        if (hasChanged && isMounted) {
           await setAddress(addr!);
         }
       }
     };
     syncAddress();
+    return () => { isMounted = false; };
   }, [activeAddressId, addresses, setAddress, selectedAddress]);
 
   const activeAddress = useMemo(() =>
@@ -170,11 +180,15 @@ export default function HomeDashboard() {
 
   // Fetch favorites if logged in
   useEffect(() => {
+    let isMounted = true;
     if (userId) {
       fetchUserFavorites(userId)
-        .then((fetchedFavs) => setFavorites(fetchedFavs))
+        .then((fetchedFavs) => {
+          if (isMounted) setFavorites(fetchedFavs);
+        })
         .catch((e) => console.log('Failed to hydrate favorites:', e));
     }
+    return () => { isMounted = false; };
   }, [userId]);
 
   // Sync activeTab with route params
@@ -225,9 +239,9 @@ export default function HomeDashboard() {
 
   const cardWidth = useMemo(() => {
     const horizontalPadding = 40;
-    const totalGap = 24;
+    const totalGap = 32; // Increased from 24
     const available = width - horizontalPadding - totalGap;
-    return Math.max(140, available / 2 - 8);
+    return Math.max(140, available / 2 - 4);
   }, [width]);
 
   const handleToggleFavorite = useCallback((foodId: string) => {
@@ -265,11 +279,13 @@ export default function HomeDashboard() {
       return;
     }
 
-    const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
+    const rawStock = item.max_quantity ?? item.stock;
+    const hasStockLimit = rawStock != null && Number(rawStock) > 0;
+    const maxQuantity = hasStockLimit ? Math.floor(Number(rawStock)) : Infinity;
     const existingQty = cartItems.find((i) => i.id === item.id)?.quantity ?? 0;
 
-    if (existingQty + quantity > maxQuantity) {
-      Alert.alert('Maximum reached', 'Maximum available quantity reached');
+    if (hasStockLimit && existingQty + quantity > maxQuantity) {
+      Alert.alert('Stock Limit', `Only ${maxQuantity} servings available. You already have ${existingQty} in your cart.`);
       return;
     }
 
@@ -378,7 +394,7 @@ export default function HomeDashboard() {
 
   return (
     <View style={[styles.container, { paddingTop: topInset }]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F9FB" />
+      <StatusBar style={isDark ? "light" : "dark"} backgroundColor={colors.surface} />
 
       {/* 🛡️ SYSTEM MESSAGING BLOCK (Mutually Exclusive to prevent glitching) */}
       {(() => {
@@ -387,9 +403,9 @@ export default function HomeDashboard() {
         // 1. Global Mode (No branch nearby)
         if (isGlobalMode) {
           return (
-            <View style={styles.globalModeBanner}>
-              <Ionicons name="globe-outline" size={18} color="#FFF" />
-              <Text style={styles.globalModeBannerText}>
+            <View style={[styles.globalModeBanner, { backgroundColor: colors.surface }]}>
+              <Ionicons name="globe-outline" size={18} color={colors.primary} />
+              <Text style={[styles.globalModeBannerText, { color: colors.text }]}>
                 No available delivery branch in this location.
               </Text>
             </View>
@@ -399,9 +415,9 @@ export default function HomeDashboard() {
         // 2. No Address Selected
         if (!activeAddress) {
           return (
-            <View style={styles.softMenuBanner}>
-              <Ionicons name="information-circle-outline" size={18} color="#FFF" />
-              <Text style={styles.softMenuText}>
+            <View style={[styles.softMenuBanner, { backgroundColor: colors.surface }]}>
+              <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
+              <Text style={[styles.softMenuText, { color: colors.text }]}>
                 Select a delivery address to continue and check availability.
               </Text>
             </View>
@@ -425,13 +441,13 @@ export default function HomeDashboard() {
         // 5. Active Branch Mode (Smart Message)
         if (selectedBranch) {
           return (
-            <View style={styles.smartMessageBanner}>
+            <View style={[styles.smartMessageBanner, { backgroundColor: colors.surface, borderBottomColor: colors.primary + '33' }]}>
               <Ionicons
                 name={isManualSelection ? "information-circle-outline" : "sparkles-outline"}
                 size={16}
-                color="#D94F3D"
+                color={colors.primary}
               />
-              <Text style={styles.smartMessageText}>
+              <Text style={[styles.smartMessageText, { color: colors.heading }]}>
                 {isManualSelection
                   ? `You switched from recommended branch`
                   : `We selected the nearest branch for faster delivery`}
@@ -447,48 +463,48 @@ export default function HomeDashboard() {
         <View style={styles.header}>
           <TouchableOpacity
             activeOpacity={0.8}
-            style={styles.locationContainer}
+            style={[styles.locationContainer, { backgroundColor: colors.surface }]}
             onPress={() => setShowDeliveryModal(true)}
           >
-            <View style={styles.locationIconWrap}>
-              <Feather name="map-pin" size={18} color="#D94F3D" />
+            <View style={[styles.locationIconWrap, { backgroundColor: colors.primary }]}>
+              <Feather name="map-pin" size={18} color={colors.background} />
             </View>
             <View style={styles.deliveryTextWrap}>
-              <Text style={styles.deliveryLabel}>
+              <Text style={[styles.deliveryLabel, { color: colors.text }]}>
                 {orderMode === 'delivery' ? 'Deliver to' : 'Pick up at'}
               </Text>
               <View style={styles.deliverySubRow}>
-                <Text style={styles.deliveryAddress} numberOfLines={1}>
+                <Text style={[styles.deliveryAddress, { color: colors.heading }]} numberOfLines={1}>
                   {(() => {
                     if (isLocationLoading) return 'Detecting location...';
                     if (!activeAddress) return 'Select Location';
                     return formatAddressForDisplay(activeAddress);
                   })()}
                 </Text>
-                <Feather name="chevron-down" size={14} color="#8A8A8A" style={{ marginLeft: 2 }} />
+                <Feather name="chevron-down" size={14} color={colors.text} style={{ marginLeft: 2 }} />
               </View>
             </View>
           </TouchableOpacity>
 
           <View style={styles.headerRight}>
-            <TouchableOpacity activeOpacity={0.8} style={styles.notificationButton}>
-              <Feather name="bell" size={18} color="#2C2C2C" />
+            <TouchableOpacity activeOpacity={0.8} style={[styles.notificationButton, { backgroundColor: colors.surface, shadowColor: colors.primary }]}>
+              <Feather name="bell" size={18} color={colors.heading} />
               {notificationCount > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{notificationCount > 99 ? '99+' : notificationCount}</Text>
+                <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                  <Text style={[styles.badgeText, { color: colors.background }]}>{notificationCount > 99 ? '99+' : notificationCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
 
             <TouchableOpacity
               activeOpacity={0.8}
-              style={styles.cartButton}
+              style={[styles.cartButton, { backgroundColor: colors.surface, shadowColor: colors.primary }]}
               onPress={() => setActiveTab('shopping-cart')}
             >
-              <Feather name="shopping-cart" size={18} color="#2C2C2C" />
+              <Feather name="shopping-cart" size={18} color={colors.heading} />
               {cartCount > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{cartCount > 99 ? '99+' : cartCount}</Text>
+                <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                  <Text style={[styles.badgeText, { color: colors.background }]}>{cartCount > 99 ? '99+' : cartCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -498,8 +514,8 @@ export default function HomeDashboard() {
 
       {activeTab === 'home' && (
         <View style={styles.titleWrap}>
-          <Text style={styles.title}>Authentic Japanese</Text>
-          <Text style={styles.title}>Food Delivered Fast</Text>
+          <Text style={[styles.title, { color: colors.heading }]}>Authentic Japanese</Text>
+          <Text style={[styles.title, { color: colors.heading }]}>Food Delivered Fast</Text>
           {isGlobalMode ? (
             <View style={[styles.branchStatusPill, { backgroundColor: 'rgba(107, 114, 128, 0.1)' }]}>
               <Ionicons name="globe-outline" size={14} color="#6B7280" />
@@ -508,10 +524,10 @@ export default function HomeDashboard() {
               </Text>
             </View>
           ) : selectedBranch ? (
-            <View style={styles.branchStatusPill}>
+            <View style={[styles.branchStatusPill, { backgroundColor: colors.primary + '1A' }]}>
               <View style={[styles.statusDot, { backgroundColor: selectedBranch.status === 'closed' ? '#FF5252' : '#4CAF50' }]} />
-              <Text style={styles.servingFromText}>
-                Serving From: <Text style={styles.branchNameBold}>{selectedBranch.name}</Text>
+              <Text style={[styles.servingFromText, { color: colors.text }]}>
+                Serving From: <Text style={[styles.branchNameBold, { color: colors.heading }]}>{selectedBranch.name}</Text>
                 {selectedBranch.status_text && (
                   <Text> • {selectedBranch.status_text}</Text>
                 )}
@@ -521,25 +537,25 @@ export default function HomeDashboard() {
         </View>
       )}
 
-      <View style={styles.contentWrap}>
+      <View style={[styles.contentWrap, { backgroundColor: colors.background }]}>
         <View style={[styles.tabContainer, activeTab === 'home' ? styles.visibleTab : styles.hiddenTab]}>
           <View style={styles.searchRow}>
-            <View style={styles.searchContainer}>
-              <Feather name="search" size={18} color="#8A8A8A" />
+            <View style={[styles.searchContainer, { backgroundColor: colors.surface, shadowColor: colors.primary }]}>
+              <Feather name="search" size={18} color={colors.text} />
               <TextInput
                 value={search}
                 onChangeText={setSearch}
                 placeholder="Search sushi, ramen..."
-                placeholderTextColor="#8A8A8A"
-                style={styles.searchInput}
+                placeholderTextColor={colors.text}
+                style={[styles.searchInput, { color: colors.heading }]}
               />
             </View>
             <TouchableOpacity
               activeOpacity={0.8}
-              style={styles.filterButton}
+              style={[styles.filterButton, { backgroundColor: colors.surface, shadowColor: colors.primary }]}
               onPress={() => { /* Toggle filter panel */ }}
             >
-              <Feather name="sliders" size={18} color="#2C2C2C" />
+              <Feather name="sliders" size={18} color={colors.heading} />
             </TouchableOpacity>
           </View>
 
@@ -559,19 +575,27 @@ export default function HomeDashboard() {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       setActiveCategory(cat.id);
                     }}
-                    style={[styles.categoryCard, isActive && styles.categoryCardActive]}
+                    style={[
+                      styles.categoryCard, 
+                      { backgroundColor: colors.surface, shadowColor: colors.primary },
+                      isActive && [styles.categoryCardActive, { borderColor: colors.primary, backgroundColor: colors.background }]
+                    ]}
                   >
-                    <View style={[styles.categoryIconWrap, isActive && styles.categoryIconWrapActive]}>
+                    <View style={[
+                      styles.categoryIconWrap, 
+                      { backgroundColor: colors.background },
+                      isActive && [styles.categoryIconWrapActive, { borderColor: colors.primary, backgroundColor: colors.background }]
+                    ]}>
                       <CategoryIcon cat={cat} isActive={isActive} />
                     </View>
-                    <Text style={[styles.categoryName, isActive && styles.categoryNameActive]}>
+                    <Text style={[styles.categoryName, { color: colors.text }, isActive && [styles.categoryNameActive, { color: colors.heading }]]}>
                       {cat.name}
                     </Text>
                     {isActive && (
                       <Ionicons
                         name="flower"
                         size={12}
-                        color="#D94F3D"
+                        color={colors.primary}
                         style={{ marginLeft: 6, opacity: 0.8 }}
                       />
                     )}
@@ -661,7 +685,7 @@ export default function HomeDashboard() {
       )}
 
       <Animated.View style={flyStyle}>
-        <Feather name="plus" size={16} color="#FFF" />
+        <Feather name="plus" size={16} color={colors.background} />
       </Animated.View>
 
       <DeliveryDetailsModal
@@ -693,7 +717,6 @@ export default function HomeDashboard() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FBEAD6', // 60% Champagne
   },
   header: {
     flexDirection: 'row',
@@ -707,7 +730,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0C4CB', // 30% Blush
+    backgroundColor: '#D38C9D', // Will be overridden
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 16,
@@ -733,7 +756,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: '700',
-    color: '#4A2C35', // Heading Mauve
+    color: '#000', // Dynamic
   },
   headerRight: {
     flexDirection: 'row',
@@ -743,10 +766,10 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F0C4CB', // Blush
+    backgroundColor: '#D38C9D', // Dynamic
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 5,
@@ -756,10 +779,10 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F0C4CB', // Blush
+    backgroundColor: '#D38C9D', // Dynamic
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 5,
@@ -769,7 +792,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -2,
-    backgroundColor: '#C87D87', // Antique Rose
+    backgroundColor: '#D38C9D', // Antique Rose
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -791,7 +814,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#4A2C35', // Heading Mauve
+    color: '#000', // Dynamic
     lineHeight: 34,
     fontFamily: 'Outfit_800ExtraBold',
   },
@@ -845,11 +868,11 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0C4CB', // Blush
+    backgroundColor: '#D38C9D', // Blush
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 52,
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
@@ -866,11 +889,11 @@ const styles = StyleSheet.create({
   filterButton: {
     width: 52,
     height: 52,
-    backgroundColor: '#F0C4CB', // Blush
+    backgroundColor: '#D38C9D', // Blush
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
@@ -886,20 +909,20 @@ const styles = StyleSheet.create({
   categoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0C4CB', // Blush
+    backgroundColor: '#D38C9D', // Blush
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 30,
     borderWidth: 1.5,
     borderColor: 'transparent',
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOpacity: 0.1,
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 6,
     elevation: 1,
   },
   categoryCardActive: {
-    borderColor: '#C87D87', // Antique Rose
+    borderColor: '#D38C9D', // Antique Rose
     backgroundColor: '#FBEAD6', // Champagne for active pill
   },
   categoryIconWrap: {
@@ -914,7 +937,7 @@ const styles = StyleSheet.create({
   categoryIconWrapActive: {
     backgroundColor: '#FBEAD6',
     borderWidth: 2,
-    borderColor: '#C87D87', // Antique Rose
+    borderColor: '#D38C9D', // Antique Rose
   },
   categoryName: {
     fontSize: 14,
@@ -1021,13 +1044,13 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#C87D87', // Antique Rose
+    backgroundColor: '#D38C9D', // Antique Rose
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 4,
   },
   smartMessageBanner: {
-    backgroundColor: '#F0C4CB', // Blush
+    backgroundColor: '#D38C9D', // Blush
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
@@ -1035,7 +1058,7 @@ const styles = StyleSheet.create({
     gap: 10,
     minHeight: 44,
     borderBottomWidth: 1,
-    borderBottomColor: '#C87D87',
+    borderBottomColor: '#D38C9D',
   },
   smartMessageText: {
     color: '#4A2C35', // Mauve
@@ -1046,3 +1069,4 @@ const styles = StyleSheet.create({
     fontFamily: 'Outfit_700Bold',
   },
 });
+

@@ -1,5 +1,5 @@
 import { Colors, Typography } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import {
@@ -19,8 +19,7 @@ interface CheckboxProps {
 }
 
 export function Checkbox({ label, checked, onPress, style }: CheckboxProps) {
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors: theme } = useAppTheme();
 
     return (
         <TouchableOpacity

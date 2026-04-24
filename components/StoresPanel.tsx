@@ -14,6 +14,7 @@ import {
 import { MapView, Marker, type MapViewInstance } from './MapComponent';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { useBranch } from '@/state/contexts/BranchContext';
 import { useAppStateFlow } from '@/hooks/useAppStateFlow';
 import { useCart } from '@/state/contexts/CartContext';
@@ -25,6 +26,7 @@ interface StoresPanelProps {
 }
 
 export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelProps) {
+    const { colors, isDark } = useAppTheme();
     const [search, setSearch] = useState('');
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
     
@@ -113,14 +115,14 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
         return (
             <Animated.View 
                 entering={FadeInUp.delay(index * 50).duration(400)}
-                style={[styles.card, isSelected && styles.cardSelected]}
+                style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.primary + '33', shadowColor: colors.primary }, isSelected && { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.background }]}
             >
                 <View style={styles.titleRow}>
-                    <Text style={styles.cardTitle}>{item.name}</Text>
+                    <Text style={[styles.cardTitle, { color: colors.heading }]}>{item.name}</Text>
                     {isSelected && (
-                        <View style={styles.selectedBadge}>
-                            <Feather name="check-circle" size={12} color="#FFFFFF" />
-                            <Text style={styles.selectedBadgeText}>Active</Text>
+                        <View style={[styles.selectedBadge, { backgroundColor: colors.primary }]}>
+                            <Feather name="check-circle" size={12} color={colors.background} />
+                            <Text style={[styles.selectedBadgeText, { color: colors.background }]}>Active</Text>
                         </View>
                     )}
                 </View>
@@ -131,32 +133,37 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                             {item.status === 'open' ? 'Open' : 'Closed'}
                         </Text>
                     </View>
-                    <Text style={styles.statusText}>{item.status_text || '24hrs Open'}</Text>
+                    <Text style={[styles.statusText, { color: colors.text }]}>{item.status_text || '24hrs Open'}</Text>
                 </View>
 
                 <View style={styles.infoRow}>
-                    <Feather name="map-pin" size={13} color="#C87D87" style={styles.infoIcon} />
-                    <Text style={styles.infoText}>
+                    <Feather name="map-pin" size={13} color={colors.primary} style={styles.infoIcon} />
+                    <Text style={[styles.infoText, { color: colors.primary }]}>
                         {Number.isFinite(distanceKm) ? `${distanceKm.toFixed(1)} km away` : 'Distance unavailable'}
                     </Text>
                 </View>
 
-                <Text style={styles.addressText}>{item.address}</Text>
-                <Text style={styles.branchMetaText}>
+                <Text style={[styles.addressText, { color: colors.text }]}>{item.address}</Text>
+                <Text style={[styles.branchMetaText, { color: colors.text }]}>
                     {`Delivery Range: ${item.delivery_radius_km?.toFixed(1) || '0.0'} km`}
                 </Text>
 
                 <View style={styles.btnRow}>
                     <TouchableOpacity 
-                        style={styles.outlineBtn} 
+                        style={[styles.outlineBtn, { borderColor: colors.primary }]} 
                         onPress={() => handleNavigate(item)}
                     >
-                        <Feather name="navigation" size={14} color="#2C2C2C" />
-                        <Text style={styles.outlineBtnText}>Directions</Text>
+                        <Feather name="navigation" size={14} color={colors.heading} />
+                        <Text style={[styles.outlineBtnText, { color: colors.heading }]}>Directions</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity 
-                        style={[styles.filledBtn, isSelected && styles.filledBtnSecondary, !inRange && styles.filledBtnDisabled]} 
+                        style={[
+                            styles.filledBtn, 
+                            { backgroundColor: colors.primary },
+                            isSelected && { backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.primary }, 
+                            !inRange && { backgroundColor: colors.surface, opacity: 0.5, borderWidth: 1.2, borderColor: colors.primary }
+                        ]} 
                         onPress={() => {
                             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                             handleSelectBranch(item);
@@ -164,7 +171,7 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                     >
                         <View style={styles.statusIndicatorRow}>
                             <View style={[styles.statusDotSmall, { backgroundColor: inRange ? '#4CAF50' : '#FF5252' }]} />
-                            <Text style={[styles.filledBtnText, isSelected && styles.filledBtnTextSecondary]}>
+                            <Text style={[styles.filledBtnText, { color: colors.background }, isSelected && { color: colors.primary }]}>
                                 {isSelected ? 'Selected' : (inRange ? 'Order Now' : 'Unavailable')}
                             </Text>
                         </View>
@@ -175,36 +182,36 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.primary + '33' }]}>
                 <View style={{ width: 44 }} />
                 <View style={styles.headerTitleWrap}>
-                    <Text style={styles.headerTitle}>Store List</Text>
-                    <Text style={styles.headerSubtitle}>Choose your nearest branch</Text>
+                    <Text style={[styles.headerTitle, { color: colors.heading }]}>Store List</Text>
+                    <Text style={[styles.headerSubtitle, { color: colors.text }]}>Choose your nearest branch</Text>
                 </View>
                 <TouchableOpacity 
                     onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setViewMode(viewMode === 'list' ? 'map' : 'list');
                     }}
-                    style={styles.headerIconBtn}
+                    style={[styles.headerIconBtn, { backgroundColor: colors.background, borderColor: colors.primary + '33' }]}
                 >
-                    <Feather name={viewMode === 'list' ? "map" : "list"} size={22} color="#4A2C35" />
+                    <Feather name={viewMode === 'list' ? "map" : "list"} size={22} color={colors.heading} />
                 </TouchableOpacity>
             </View>
 
             {viewMode === 'list' ? (
                 <>
                     <View style={styles.searchWrapper}>
-                        <View style={styles.searchContainer}>
-                            <Feather name="search" size={20} color="#8A8A8A" />
+                        <View style={[styles.searchContainer, { backgroundColor: colors.background, borderColor: colors.primary + '66' }]}>
+                            <Feather name="search" size={20} color={colors.text} />
                             <TextInput
-                                style={styles.searchInput}
+                                style={[styles.searchInput, { color: colors.heading }]}
                                 placeholder="Store name or location"
                                 value={search}
                                 onChangeText={setSearch}
-                                placeholderTextColor="#8A8A8A"
+                                placeholderTextColor={colors.text}
                             />
                         </View>
                     </View>
@@ -213,10 +220,10 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                         data={filteredBranches}
                         keyExtractor={(item) => String(item.id)}
                         renderItem={renderBranchCard}
-                        ListHeaderComponent={filteredBranches.length > 0 ? <Text style={styles.listSectionTitle}>All Branches</Text> : null}
+                        ListHeaderComponent={filteredBranches.length > 0 ? <Text style={[styles.listSectionTitle, { color: colors.text }]}>All Branches</Text> : null}
                         ListEmptyComponent={
                             <View style={styles.emptyContainer}>
-                                <Text style={styles.emptyText}>No branches found</Text>
+                                <Text style={[styles.emptyText, { color: colors.text }]}>No branches found</Text>
                             </View>
                         }
                         contentContainerStyle={[styles.listContent, { paddingBottom: bottomPadding + 40 }]}
@@ -261,8 +268,8 @@ const styles = StyleSheet.create({
         height: 72,
         paddingHorizontal: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#C87D87',
-        backgroundColor: '#F0C4CB', // 30% Blush
+        borderBottomColor: '#D38C9D',
+        backgroundColor: '#D38C9D', // 30% Blush
     },
     headerTitleWrap: {
         alignItems: 'center',
@@ -286,7 +293,7 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         backgroundColor: '#FBEAD6', // Champagne
         borderWidth: 1,
-        borderColor: '#C87D87',
+        borderColor: '#D38C9D',
     },
     searchWrapper: {
         paddingHorizontal: 16,
@@ -300,7 +307,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         height: 54,
         borderWidth: 1.5,
-        borderColor: '#C87D87',
+        borderColor: '#D38C9D',
     },
     searchInput: {
         flex: 1,
@@ -324,18 +331,18 @@ const styles = StyleSheet.create({
     card: {
         paddingHorizontal: 16,
         paddingVertical: 18,
-        backgroundColor: '#F0C4CB', // 30% Blush
+        backgroundColor: '#D38C9D', // 30% Blush
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#C87D87',
+        borderColor: '#D38C9D',
         marginBottom: 12,
         elevation: 4,
-        shadowColor: '#C87D87',
+        shadowColor: '#D38C9D',
         shadowOpacity: 0.1,
         shadowRadius: 10,
     },
     cardSelected: {
-        borderColor: '#C87D87', // Antique Rose
+        borderColor: '#D38C9D', // Antique Rose
         borderWidth: 2,
         backgroundColor: '#FBEAD6', // Champagne for selected
     },
@@ -353,7 +360,7 @@ const styles = StyleSheet.create({
     selectedBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 4,
@@ -406,7 +413,7 @@ const styles = StyleSheet.create({
     },
     infoText: {
         fontSize: 13,
-        color: '#C87D87', // Antique Rose
+        color: '#D38C9D', // Antique Rose
         fontWeight: '700',
     },
     addressText: {
@@ -433,7 +440,7 @@ const styles = StyleSheet.create({
         height: 46,
         borderRadius: 23,
         borderWidth: 1.5,
-        borderColor: '#C87D87', // Antique Rose
+        borderColor: '#D38C9D', // Antique Rose
     },
     outlineBtnText: {
         fontSize: 14,
@@ -444,20 +451,20 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 46,
         borderRadius: 23,
-        backgroundColor: '#C87D87', // Antique Rose
+        backgroundColor: '#D38C9D', // Antique Rose
         justifyContent: 'center',
         alignItems: 'center',
     },
     filledBtnSecondary: {
         backgroundColor: '#FBEAD6', // Champagne
         borderWidth: 1.5,
-        borderColor: '#C87D87',
+        borderColor: '#D38C9D',
     },
     filledBtnDisabled: {
-        backgroundColor: '#F0C4CB', // Blush
+        backgroundColor: '#D38C9D', // Blush
         opacity: 0.5,
         borderWidth: 1.2,
-        borderColor: '#C87D87',
+        borderColor: '#D38C9D',
     },
     statusIndicatorRow: {
         flexDirection: 'row',
@@ -475,7 +482,7 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
     },
     filledBtnTextSecondary: {
-        color: '#C87D87', // Antique Rose
+        color: '#D38C9D', // Antique Rose
     },
     mapContainer: {
         flex: 1,
@@ -492,3 +499,4 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
 });
+

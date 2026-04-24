@@ -1,5 +1,5 @@
 import { Colors, Typography } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import React from 'react';
 import {
     ActivityIndicator,
@@ -40,8 +40,7 @@ export function ThemedButton({
     disabled = false,
     icon
 }: ThemedButtonProps) {
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors: theme } = useAppTheme();
     const scale = useSharedValue(1);
 
     const animatedStyle = useAnimatedStyle(() => {

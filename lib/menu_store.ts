@@ -72,14 +72,19 @@ export const formatPeso = (n: number | string): string => {
  */
 export const resolveProductImage = (path: string | null): string | null => {
   if (!path) return null;
-  if (path.startsWith('http')) return path;
   
+  // 1. If it's already a full URL (contains protocol), return it as is
+  if (path.includes('://')) return path;
+  
+  // 2. Otherwise, construct the URL using the API base as the root
   const serverRoot = getApiBaseUrl().replace(/\/api\/v1\/?$/, '');
   const cleanPath = path.replace(/^\/+/, '');
   
+  // 3. Ensure the path goes through /storage/ if it's a local file path
   if (cleanPath.startsWith('storage/') || cleanPath.startsWith('uploads/')) {
     return `${serverRoot}/${cleanPath}`;
   }
+  
   return `${serverRoot}/storage/${cleanPath}`;
 };
 
@@ -117,7 +122,7 @@ export const refreshMenuStore = async (
         finalCategories.push({ 
           id: cid, 
           name: cname, 
-          image_path: resolveProductImage(c.image_path) 
+          image_path: resolveProductImage(c.image_path) ?? undefined
         });
       }
     });

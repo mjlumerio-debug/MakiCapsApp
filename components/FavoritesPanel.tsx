@@ -3,6 +3,8 @@ import { clearFavorites } from '@/lib/ui_store';
 import { Feather, FontAwesome } from '@expo/vector-icons';
 import React from 'react';
 import { Alert, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { formatPeso, resolveProductImage } from '@/lib/menu_store';
 
 type FavoritesPanelProps = {
   items: Food[];
@@ -18,36 +20,40 @@ type FavoriteRowProps = {
 };
 
 function FavoriteRow({ item, onToggleFavorite, onAddToCart }: FavoriteRowProps) {
+  const { colors } = useAppTheme();
+  const displayImage = resolveProductImage(item.image_path);
+  const displayPrice = formatPeso(item.selling_price);
+
   return (
-    <View style={styles.favoriteCard}>
-      {item.image ? (
-        <Image source={item.image} style={styles.favoriteImage} resizeMode="cover" />
+    <View style={[styles.favoriteCard, { backgroundColor: colors.surface, borderColor: colors.primary + '1A', shadowColor: colors.primary }]}>
+      {displayImage ? (
+        <Image source={{ uri: displayImage }} style={styles.favoriteImage} resizeMode="cover" />
       ) : (
-        <View style={styles.favoriteImage} />
+        <View style={[styles.favoriteImage, { backgroundColor: colors.background }]} />
       )}
       <View style={styles.favoriteInfo}>
-        <Text style={styles.favoriteTitle} numberOfLines={1}>
-          {item.title}
+        <Text style={[styles.favoriteTitle, { color: colors.heading }]} numberOfLines={1}>
+          {item.name}
         </Text>
-        <View style={styles.categoryPill}>
-          <Text style={styles.favoriteCategory}>{item.category}</Text>
+        <View style={[styles.categoryPill, { backgroundColor: colors.background }]}>
+          <Text style={[styles.favoriteCategory, { color: colors.text }]}>{item.category_name}</Text>
         </View>
-        <Text style={styles.favoritePrice}>{item.price}</Text>
+        <Text style={[styles.favoritePrice, { color: colors.primary }]}>{displayPrice}</Text>
       </View>
       <View style={styles.favoriteActions}>
         <TouchableOpacity
           activeOpacity={0.85}
-          style={styles.favoriteHeartBtn}
+          style={[styles.favoriteHeartBtn, { backgroundColor: colors.background, borderColor: colors.primary + '33' }]}
           onPress={() => onToggleFavorite(item.id)}
         >
-          <FontAwesome name="heart" size={14} color="#D94F3D" />
+          <FontAwesome name="heart" size={14} color={colors.primary} />
         </TouchableOpacity>
         <TouchableOpacity
           activeOpacity={0.85}
-          style={styles.favoriteActionBtn}
+          style={[styles.favoriteActionBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
           onPress={() => onAddToCart(item.id)}
         >
-          <Feather name="plus" size={16} color="#FFF" />
+          <Feather name="plus" size={16} color={colors.background} />
         </TouchableOpacity>
       </View>
     </View>
@@ -60,20 +66,21 @@ export default function FavoritesPanel({
   onAddToCart,
   onToggleFavorite,
 }: FavoritesPanelProps) {
+  const { colors } = useAppTheme();
   return (
-    <View style={styles.favoritesContainer}>
+    <View style={[styles.favoritesContainer, { backgroundColor: colors.background }]}>
       <View style={styles.favoritesHeader}>
         <View>
-          <Text style={styles.favoritesTitle}>Favorites</Text>
-          <Text style={styles.favoritesSubtitle}>Curated Japanese picks for your next order</Text>
+          <Text style={[styles.favoritesTitle, { color: colors.heading }]}>Favorites</Text>
+          <Text style={[styles.favoritesSubtitle, { color: colors.text }]}>Curated Japanese picks for your next order</Text>
         </View>
         <View style={styles.headerRightActions}>
-          <View style={styles.favoritesCountPill}>
-            <Text style={styles.favoritesCount}>{items.length} items</Text>
+          <View style={[styles.favoritesCountPill, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}>
+            <Text style={[styles.favoritesCount, { color: colors.heading }]}>{items.length} items</Text>
           </View>
           {items.length > 0 && (
             <TouchableOpacity
-              style={styles.clearAllBtn}
+              style={[styles.clearAllBtn, { backgroundColor: colors.surface }]}
               onPress={() => {
                 Alert.alert(
                   "Clear Favorites",
@@ -85,18 +92,18 @@ export default function FavoritesPanel({
                 );
               }}
             >
-              <Feather name="trash-2" size={20} color="#D94F3D" />
+              <Feather name="trash-2" size={20} color={colors.primary} />
             </TouchableOpacity>
           )}
         </View>
       </View>
       {items.length === 0 ? (
-        <View style={styles.emptyFavorites}>
-          <View style={styles.emptyIconWrap}>
-            <FontAwesome name="heart-o" size={24} color="#B2A79A" />
+        <View style={[styles.emptyFavorites, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}>
+          <View style={[styles.emptyIconWrap, { backgroundColor: colors.background }]}>
+            <FontAwesome name="heart-o" size={24} color={colors.text} />
           </View>
-          <Text style={styles.emptyFavoritesText}>No saved dishes yet</Text>
-          <Text style={styles.emptyFavoritesSubText}>
+          <Text style={[styles.emptyFavoritesText, { color: colors.heading }]}>No saved dishes yet</Text>
+          <Text style={[styles.emptyFavoritesSubText, { color: colors.text }]}>
             Tap the heart icon on any menu item to build your cozy favorites list.
           </Text>
         </View>
@@ -124,7 +131,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     paddingTop: 4,
-    backgroundColor: '#F8F9FB',
   },
   favoritesHeader: {
     flexDirection: 'row',
@@ -133,26 +139,21 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   favoritesTitle: {
-    color: '#2C2C2C',
     fontSize: 24,
     fontWeight: '700',
   },
   favoritesSubtitle: {
     marginTop: 4,
-    color: '#7D746A',
     fontSize: 12,
   },
   favoritesCountPill: {
     marginTop: 2,
     borderRadius: 14,
-    backgroundColor: '#ECE4D6',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderWidth: 1,
-    borderColor: '#E2D9CA',
   },
   favoritesCount: {
-    color: '#6E665D',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -166,7 +167,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#FDDAD8',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -176,13 +176,10 @@ const styles = StyleSheet.create({
   favoriteCard: {
     flexDirection: 'row',
     alignItems: 'stretch',
-    backgroundColor: '#FCF9F3',
     borderRadius: 18,
     padding: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#EEE4D6',
-    shadowColor: '#8B7960',
     shadowOpacity: 0.07,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 8,
@@ -192,7 +189,6 @@ const styles = StyleSheet.create({
     width: 78,
     height: 78,
     borderRadius: 14,
-    backgroundColor: '#EFEAE0',
   },
   favoriteInfo: {
     flex: 1,
@@ -200,7 +196,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   favoriteTitle: {
-    color: '#2A2724',
     fontWeight: '700',
     fontSize: 15,
   },
@@ -208,16 +203,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     marginTop: 7,
     borderRadius: 10,
-    backgroundColor: '#EFE6D8',
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
   favoriteCategory: {
-    color: '#7B6D5F',
     fontSize: 11,
   },
   favoritePrice: {
-    color: '#1F1C19',
     fontSize: 17,
     fontWeight: '700',
     marginTop: 8,
@@ -231,10 +223,8 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#D94F3D',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#D94F3D',
     shadowOpacity: 0.24,
     shadowOffset: { width: 0, height: 3 },
     shadowRadius: 6,
@@ -243,39 +233,32 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#FFF5F3',
     borderWidth: 1,
-    borderColor: '#F2D4CE',
     justifyContent: 'center',
     alignItems: 'center',
   },
   emptyFavorites: {
     marginTop: 36,
-    backgroundColor: '#FCF9F3',
     borderRadius: 20,
     paddingVertical: 30,
     paddingHorizontal: 18,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EEE4D6',
   },
   emptyIconWrap: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#F3ECE0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   emptyFavoritesText: {
     marginTop: 10,
-    color: '#2A2724',
     fontSize: 17,
     fontWeight: '700',
   },
   emptyFavoritesSubText: {
     marginTop: 6,
-    color: '#867D74',
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 20,

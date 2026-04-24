@@ -2,7 +2,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { ThemedButton } from '@/components/ui/ThemedButton';
 import { ThemedInput } from '@/components/ui/ThemedInput';
 import { Colors, Typography } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import api from '@/lib/api';
 import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -36,8 +36,7 @@ type PendingSignupData = {
 
 export default function SignupScreen() {
     const router = useRouter();
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors, isDark } = useAppTheme();
 
     const backButtonScale = useSharedValue(1);
     const animatedBackStyle = useAnimatedStyle(() => ({
@@ -253,7 +252,7 @@ export default function SignupScreen() {
                 style={StyleSheet.absoluteFillObject}
                 blurRadius={2}
             />
-            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(255, 255, 255, 0.4)' }]} />
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.5)' }]} />
 
             <SafeAreaView style={{ flex: 1 }}>
                 <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -264,54 +263,54 @@ export default function SignupScreen() {
                     >
                         <View style={styles.mainContent}>
                             <View style={styles.topSection}>
-                                <TouchableOpacity
-                                    onPress={() => router.back()}
-                                    onPressIn={() => {
-                                        backButtonScale.value = withSpring(0.8);
-                                    }}
-                                    onPressOut={() => {
-                                        backButtonScale.value = withSpring(1);
-                                    }}
-                                    style={styles.backButton}
-                                >
-                                    <Animated.View style={[animatedBackStyle, styles.backButtonInner, { backgroundColor: 'rgba(255, 255, 255, 0.8)' }]}>
-                                        <Ionicons name="chevron-back" size={24} color={theme.tint} />
-                                    </Animated.View>
-                                </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPress={() => router.back()}
+                                        onPressIn={() => {
+                                            backButtonScale.value = withSpring(0.8);
+                                        }}
+                                        onPressOut={() => {
+                                            backButtonScale.value = withSpring(1);
+                                        }}
+                                        style={styles.backButton}
+                                    >
+                                        <Animated.View style={[animatedBackStyle, styles.backButtonInner, { backgroundColor: colors.surface }]}>
+                                            <Ionicons name="chevron-back" size={24} color={colors.primary} />
+                                        </Animated.View>
+                                    </TouchableOpacity>
 
                                 <Animated.View
-                                    entering={FadeInDown.duration(800).springify()}
+                                    entering={FadeInDown.duration(800)}
                                     style={styles.header}
                                 >
-                                    <Text style={[styles.title, { color: '#2D3436' }]}>
+                                    <Text style={[styles.title, { color: colors.heading }]}>
                                         Join the Kitchen
                                     </Text>
-                                    <Text style={[styles.subtitle, { color: '#636E72' }]}>
-                                        Create your <Text style={{ fontFamily: Typography.brand, color: theme.tint }}>Maki Desu</Text> account for a premium dining experience.
+                                    <Text style={[styles.subtitle, { color: colors.text }]}>
+                                        Create your <Text style={{ fontFamily: Typography.brand, color: colors.primary }}>Maki Desu</Text> account for a premium dining experience.
                                     </Text>
                                 </Animated.View>
                             </View>
 
                             <Animated.View
-                                entering={FadeInUp.delay(200).duration(1000).springify()}
-                                style={[styles.signupCard, { backgroundColor: 'rgba(255, 255, 255, 0.9)' }]}
+                                entering={FadeInUp.delay(200).duration(1000)}
+                                style={[styles.signupCard, { backgroundColor: colors.surface, shadowColor: colors.primary }]}
                             >
                                 <View style={styles.socialRow}>
-                                    <TouchableOpacity style={styles.socialIconButton}>
+                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <AntDesign name="google" size={22} color="#DB4437" />
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.socialIconButton}>
+                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <FontAwesome name="facebook" size={22} color="#4267B2" />
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.socialIconButton}>
-                                        <Ionicons name="logo-apple" size={22} color="#000000" />
+                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
+                                        <Ionicons name="logo-apple" size={22} color={colors.heading} />
                                     </TouchableOpacity>
                                 </View>
 
                                 <View style={styles.dividerRow}>
-                                    <View style={[styles.dividerLine, { backgroundColor: '#DFE6E9' }]} />
-                                    <Text style={styles.dividerLabel}>Or register with email</Text>
-                                    <View style={[styles.dividerLine, { backgroundColor: '#DFE6E9' }]} />
+                                    <View style={[styles.dividerLine, { backgroundColor: colors.primary + '1A' }]} />
+                                    <Text style={[styles.dividerLabel, { color: colors.text }]}>Or register with email</Text>
+                                    <View style={[styles.dividerLine, { backgroundColor: colors.primary + '1A' }]} />
                                 </View>
 
                                 {authError ? <Text style={styles.mainError}>{authError}</Text> : null}
@@ -343,13 +342,13 @@ export default function SignupScreen() {
                                     </View>
                                     {fieldErrors.name ? <Text style={styles.fieldError}>{fieldErrors.name}</Text> : null}
 
-                                    <View style={[styles.phoneInputContainer, { borderColor: fieldErrors.contactNumber ? '#D82E3F' : '#F1F2F6' }]}>
-                                        <View style={styles.phonePrefix}>
-                                            <Text style={styles.phonePrefixText}>+63</Text>
+                                    <View style={[styles.phoneInputContainer, { backgroundColor: colors.background, borderColor: fieldErrors.contactNumber ? '#D82E3F' : colors.primary + '1A' }]}>
+                                        <View style={[styles.phonePrefix, { backgroundColor: colors.surface, borderRightColor: colors.primary + '1A' }]}>
+                                            <Text style={[styles.phonePrefixText, { color: colors.heading }]}>+63</Text>
                                         </View>
                                         <TextInput
                                             placeholder="Mobile Number (9XXXXXXXXX)"
-                                            placeholderTextColor="#B2BEC3"
+                                            placeholderTextColor={colors.text}
                                             value={contactNumber}
                                             onChangeText={(t) => {
                                                 const cleaned = t.replace(/[^0-9]/g, '').slice(0, 10);
@@ -357,7 +356,7 @@ export default function SignupScreen() {
                                                 setFieldErrors(e => ({ ...e, contactNumber: undefined }));
                                             }}
                                             keyboardType="phone-pad"
-                                            style={styles.phoneTextInput}
+                                            style={[styles.phoneTextInput, { color: colors.heading }]}
                                         />
                                     </View>
                                     {fieldErrors.contactNumber ? <Text style={styles.fieldError}>{fieldErrors.contactNumber}</Text> : null}
@@ -395,8 +394,8 @@ export default function SignupScreen() {
                                             checked={agreeTerms}
                                             onPress={() => setAgreeTerms(!agreeTerms)}
                                         />
-                                        <Text style={styles.termsText}>
-                                            I agree to the <Text style={[styles.termsLink, { color: theme.tint }]} onPress={() => { setModalType('terms'); setShowTermsModal(true); }}>Terms & Conditions</Text>
+                                        <Text style={[styles.termsText, { color: colors.text }]}>
+                                            I agree to the <Text style={[styles.termsLink, { color: colors.primary }]} onPress={() => { setModalType('terms'); setShowTermsModal(true); }}>Terms & Conditions</Text>
                                         </Text>
                                     </View>
                                     {fieldErrors.terms ? <Text style={styles.fieldError}>{fieldErrors.terms}</Text> : null}
@@ -406,16 +405,16 @@ export default function SignupScreen() {
                                         onPress={handleSignup}
                                         loading={isSubmitting}
                                         disabled={isSubmitting}
-                                        style={styles.signupButton}
+                                        style={[styles.signupButton, { shadowColor: colors.primary }]}
                                     />
 
                                     <View style={styles.loginPrompt}>
-                                        <Text style={styles.loginText}>Already a member? </Text>
+                                        <Text style={[styles.loginText, { color: colors.text }]}>Already a member? </Text>
                                         <TouchableOpacity 
                                             onPress={() => router.replace('/login')}
                                             activeOpacity={0.7}
                                         >
-                                            <Text style={[styles.loginLink, { color: theme.tint }]}>Sign In</Text>
+                                            <Text style={[styles.loginLink, { color: colors.primary }]}>Sign In</Text>
                                         </TouchableOpacity>
                                     </View>
                                 </View>
@@ -429,17 +428,17 @@ export default function SignupScreen() {
                             onRequestClose={() => setShowTermsModal(false)}
                         >
                             <View style={styles.modalOverlay}>
-                                <View style={[styles.modalContent, { backgroundColor: 'white' }]}>
+                                <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
                                     <View style={styles.modalHeader}>
-                                        <Text style={[styles.modalTitle, { color: theme.tint }]}>
+                                        <Text style={[styles.modalTitle, { color: colors.primary }]}>
                                             {modalType === 'terms' ? 'Terms and Conditions' : 'Privacy Policy'}
                                         </Text>
                                         <TouchableOpacity onPress={() => setShowTermsModal(false)}>
-                                            <Ionicons name="close" size={24} color="#2D3436" />
+                                            <Ionicons name="close" size={24} color={colors.heading} />
                                         </TouchableOpacity>
                                     </View>
                                     <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                                        <Text style={styles.termsBodyText}>
+                                        <Text style={[styles.termsBodyText, { color: colors.text }]}>
                                             {modalType === 'terms' ? `
 Welcome to MakiDesu!
 
@@ -485,10 +484,10 @@ MakiDesu Privacy Commitment
                                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                                     style={{ width: '100%', justifyContent: 'flex-end' }}
                                 >
-                                    <View style={[styles.verificationModalContent, { backgroundColor: 'white' }]}>
+                                    <View style={[styles.verificationModalContent, { backgroundColor: colors.surface }]}>
                                         <View style={styles.verificationModalHeader}>
-                                            <Ionicons name="mail-unread-outline" size={32} color={theme.tint} />
-                                            <Text style={[styles.verificationModalTitle, { color: theme.tint }]}>
+                                            <Ionicons name="mail-unread-outline" size={32} color={colors.primary} />
+                                            <Text style={[styles.verificationModalTitle, { color: colors.primary }]}>
                                                 Verify Your Email
                                             </Text>
                                             <TouchableOpacity
@@ -497,11 +496,11 @@ MakiDesu Privacy Commitment
                                                     setPendingSignupData(null);
                                                 }}
                                             >
-                                                <Ionicons name="close" size={24} color="#2D3436" />
+                                                <Ionicons name="close" size={24} color={colors.heading} />
                                             </TouchableOpacity>
                                         </View>
 
-                                        <Text style={styles.verificationModalSubtitle}>
+                                        <Text style={[styles.verificationModalSubtitle, { color: colors.text }]}>
                                             We have sent a verification code to your email. Please enter the 6-digit code below.
                                         </Text>
 
@@ -531,9 +530,9 @@ MakiDesu Privacy Commitment
                                             disabled={isResending || resendTimer > 0}
                                             style={styles.resendButton}
                                         >
-                                            <Text style={styles.resendButtonText}>
+                                            <Text style={[styles.resendButtonText, { color: colors.text }]}>
                                                 Did not receive code?{' '}
-                                                <Text style={[styles.resendLinkText, { color: resendTimer > 0 ? '#999' : theme.tint }]}>
+                                                <Text style={[styles.resendLinkText, { color: resendTimer > 0 ? colors.text + '80' : colors.primary }]}>
                                                     {resendTimer > 0 ? `Resend in ${resendTimer}s` : (isResending ? 'Resending...' : 'Resend')}
                                                 </Text>
                                             </Text>
@@ -549,11 +548,11 @@ MakiDesu Privacy Commitment
                             visible={showSuccessModal}
                             onRequestClose={() => { }}
                         >
-                            <View style={styles.successModalOverlay}>
+                            <View style={[styles.successModalOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)' }]}>
                                 <Animated.View
                                     style={[
                                         styles.successModalContent,
-                                        { transform: [{ scale: successScale }] }
+                                        { backgroundColor: colors.surface, transform: [{ scale: successScale }] }
                                     ]}
                                 >
                                     <View style={styles.confettiContainer}>
@@ -573,13 +572,13 @@ MakiDesu Privacy Commitment
                                     </View>
 
                                     <Animated.View style={{ transform: [{ scale: checkmarkScale }] }}>
-                                        <View style={styles.successIconContainer}>
+                                        <View style={[styles.successIconContainer, { backgroundColor: colors.background }]}>
                                             <Ionicons name="checkmark-circle" size={80} color="#4CAF50" />
                                         </View>
                                     </Animated.View>
 
-                                    <Text style={styles.successTitle}>Account Created!</Text>
-                                    <Text style={styles.successMessage}>
+                                    <Text style={[styles.successTitle, { color: colors.heading }]}>Account Created!</Text>
+                                    <Text style={[styles.successMessage, { color: colors.text }]}>
                                         Welcome to MakiDesu! Your account has been successfully created.
                                     </Text>
                                 </Animated.View>
@@ -595,7 +594,6 @@ MakiDesu Privacy Commitment
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F1E3',
     },
     mainContent: {
         flex: 1,
@@ -629,14 +627,12 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 22,
         fontFamily: Typography.h1,
-        color: '#2D3436',
     },
     subtitle: {
         fontSize: 12,
         fontFamily: Typography.body,
         marginTop: 2,
         lineHeight: 16,
-        opacity: 0.8,
     },
     signupCard: {
         borderRadius: 24,
@@ -691,16 +687,13 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     input: {
-        backgroundColor: '#F9FAFB',
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#F1F2F6',
         height: 48,
     },
     phoneInputContainer: {
         flexDirection: 'row',
         height: 48,
-        backgroundColor: '#F9FAFB',
         borderRadius: 12,
         borderWidth: 1,
         overflow: 'hidden',
@@ -708,9 +701,7 @@ const styles = StyleSheet.create({
     phonePrefix: {
         paddingHorizontal: 16,
         justifyContent: 'center',
-        backgroundColor: '#F1F2F6',
         borderRightWidth: 1,
-        borderRightColor: '#DFE6E9',
     },
     phonePrefixText: {
         fontSize: 16,
@@ -742,7 +733,6 @@ const styles = StyleSheet.create({
     signupButton: {
         height: 52,
         borderRadius: 14,
-        shadowColor: '#D82E3F',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,

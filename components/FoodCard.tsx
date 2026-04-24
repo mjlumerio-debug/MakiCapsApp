@@ -1,9 +1,10 @@
+import { formatPeso, resolveProductImage, type Food } from '@/lib/menu_store';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { type CatalogMode } from '@/state/reducers/branchReducer';
 import { Feather, FontAwesome } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import React, { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { formatPeso, resolveProductImage, type Food } from '@/lib/menu_store';
-import { type CatalogMode } from '@/state/reducers/branchReducer';
 
 type FoodCardProps = {
   item: Food;
@@ -26,6 +27,7 @@ const FoodCard = memo(function FoodCard({
   isOpen,
   catalogMode,
 }: FoodCardProps) {
+  const { colors } = useAppTheme();
   const isGlobalMode = catalogMode === 'global';
   const stockCount = Number(item.stock ?? 0);
   const isAvailableAtBranch = item.is_available;
@@ -38,10 +40,10 @@ const FoodCard = memo(function FoodCard({
   return (
     <TouchableOpacity
       activeOpacity={0.9}
-      style={[styles.foodCard, { width }]}
+      style={[styles.foodCard, { width, backgroundColor: colors.surface, shadowColor: colors.primary }]}
       onPress={() => onPress(item)}
     >
-      <View style={[styles.foodImageWrap, !displayImage && { backgroundColor: '#FBEAD6', justifyContent: 'center', alignItems: 'center' }]}>
+      <View style={[styles.foodImageWrap, { backgroundColor: colors.background }, !displayImage && { justifyContent: 'center', alignItems: 'center' }]}>
         {displayImage ? (
           <Image
             source={{ uri: displayImage }}
@@ -50,42 +52,45 @@ const FoodCard = memo(function FoodCard({
             transition={200}
           />
         ) : (
-          <Feather name="image" size={24} color="#C87D87" />
+          <Feather name="image" size={24} color={colors.primary} />
         )}
 
-        {/* Global Mode Badge */}
-        {isGlobalMode && (
-          <View style={styles.browseBadge}>
-            <Text style={styles.browseText}>Catalog</Text>
-          </View>
-        )}
+        {/* Availability Badge */}
+        <View style={[
+          styles.statusBadge, 
+          { backgroundColor: item.availability_status === 'available' ? 'rgba(76, 175, 80, 0.9)' : 'rgba(244, 67, 54, 0.9)' }
+        ]}>
+          <Text style={styles.statusBadgeText}>
+            {item.availability_status === 'available' ? 'Available' : 'Out of Stock'}
+          </Text>
+        </View>
       </View>
 
       <View style={[styles.foodCardBody, (!isAvailable && !isGlobalMode) && { opacity: 0.7 }]}>
-        <Text style={styles.foodTitle} numberOfLines={1}>
+        <Text style={[styles.foodTitle, { color: colors.heading }]} numberOfLines={1}>
           {item.name}
         </Text>
-        <Text style={styles.priceText}>{displayPrice}</Text>
+        <Text style={[styles.priceText, { color: colors.primary }]}>{displayPrice}</Text>
 
         <View style={styles.descriptionArea}>
-          <Text style={styles.foodDescription} numberOfLines={2}>
+          <Text style={[styles.foodDescription, { color: colors.text }]} numberOfLines={2}>
             {item.description || ""}
           </Text>
         </View>
-        
+
         <View style={styles.foodBottomRow}>
           {isGlobalMode ? (
-            <View style={styles.viewIcon}>
-               <Feather name="eye" size={18} color="#C87D87" />
+            <View style={[styles.viewIcon, { backgroundColor: colors.background }]}>
+              <Feather name="eye" size={18} color={colors.primary} />
             </View>
           ) : (
             <TouchableOpacity
               activeOpacity={isAvailable ? 0.8 : 1}
-              style={[styles.addIconButton, !isAvailable && styles.addIconButtonDisabled]}
+              style={[styles.addIconButton, { backgroundColor: colors.primary }, !isAvailable && styles.addIconButtonDisabled]}
               onPress={() => isAvailable ? onAddToCart(item) : null}
               disabled={!isAvailable}
             >
-              <Feather name="plus" size={20} color="#FBEAD6" />
+              <Feather name="plus" size={20} color={colors.background} />
             </TouchableOpacity>
           )}
         </View>
@@ -93,13 +98,13 @@ const FoodCard = memo(function FoodCard({
 
       <TouchableOpacity
         activeOpacity={0.8}
-        style={styles.heartButton}
+        style={[styles.heartButton, { backgroundColor: colors.background + 'E6', shadowColor: colors.primary }]}
         onPress={() => onToggleFavorite(item.id)}
       >
         <FontAwesome
           name={isFavorite ? 'heart' : 'heart-o'}
           size={16}
-          color={isFavorite ? '#C87D87' : '#7A5560'}
+          color={isFavorite ? colors.primary : colors.text}
         />
       </TouchableOpacity>
     </TouchableOpacity>
@@ -108,10 +113,10 @@ const FoodCard = memo(function FoodCard({
 
 const styles = StyleSheet.create({
   foodCard: {
-    backgroundColor: '#F0C4CB', // 30% Blush
+    backgroundColor: '#D38C9D', // 30% Blush
     borderRadius: 24,
     marginBottom: 16,
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 12,
@@ -119,32 +124,34 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   foodCardBody: {
-    padding: 12,
+    padding: 8,
   },
   foodImageWrap: {
     width: '100%',
-    aspectRatio: 1.1,
-    borderRadius: 18,
+    aspectRatio: 0.95,
+    borderRadius: 20, // Slightly more rounded for cozy feel
     marginBottom: 4,
     overflow: 'hidden',
-    backgroundColor: '#FBEAD6', // 60% Champagne
+    backgroundColor: '#FBEAD6', // Cozy Champagne background
+    borderWidth: 1,
+    borderColor: 'rgba(211, 140, 157, 0.1)', // Subtle brand pink border
   },
   foodImage: {
     width: '100%',
     height: '100%',
   },
   foodTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#4A2C35', // Heading Mauve
-    marginBottom: 2,
+    marginBottom: 0,
     fontFamily: 'Outfit-Bold',
   },
   priceText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#C87D87', // Antique Rose
-    marginBottom: 6,
+    color: '#D38C9D', // Antique Rose
+    marginBottom: 2,
     fontFamily: 'Outfit-Regular',
   },
   foodDescription: {
@@ -152,22 +159,22 @@ const styles = StyleSheet.create({
     color: '#7A5560', // Body Mauve
     lineHeight: 15,
     fontFamily: 'Outfit-Regular',
-},
-descriptionArea: {
-    height: 38,
+  },
+  descriptionArea: {
+    height: 28,
     justifyContent: 'flex-start',
-},
+  },
   foodBottomRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 2,
   },
   addIconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: '#C87D87', // Antique Rose
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: '#D38C9D', // Antique Rose
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -192,22 +199,21 @@ descriptionArea: {
     backgroundColor: 'rgba(251, 234, 214, 0.9)', // Champagne
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#C87D87',
+    shadowColor: '#D38C9D',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
     zIndex: 5,
   },
-  browseBadge: {
+  statusBadge: {
     position: 'absolute',
     bottom: 8,
     left: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
-    backgroundColor: 'rgba(0,0,0,0.6)',
   },
-  browseText: {
+  statusBadgeText: {
     color: '#FFF',
     fontSize: 9,
     fontWeight: '800',
@@ -216,3 +222,4 @@ descriptionArea: {
 });
 
 export default FoodCard;
+

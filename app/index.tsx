@@ -9,6 +9,69 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export default function OnboardingScreen() {
   const router = useRouter();
 
+  const [isChecking, setIsChecking] = React.useState(true);
+  
+  React.useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { fetchCurrentUser, refreshToken } = await import('@/lib/auth_api');
+        const { setUserId, setSessionStatus } = await import('@/lib/ui_store');
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        
+        const token = await AsyncStorage.getItem('auth_token');
+        if (!token) {
+          setIsChecking(false);
+          return;
+        }
+
+        setSessionStatus('validating');
+        
+        try {
+          // Try to validate the current token
+          const user = await fetchCurrentUser();
+          setUserId(user.id);
+          router.replace('/home_dashboard');
+        } catch (fetchError) {
+          // Token might be stale — try refreshing it
+          console.log('[SessionCheck] Initial validation failed, attempting token refresh...');
+          const refreshed = await refreshToken();
+          
+          if (refreshed) {
+            // Retry with the new token
+            try {
+              const user = await fetchCurrentUser();
+              setUserId(user.id);
+              console.log('[SessionCheck] Token refreshed and session restored.');
+              router.replace('/home_dashboard');
+              return;
+            } catch {
+              // Even after refresh, still fails
+            }
+          }
+          
+          // Token is truly dead — clean up
+          console.log('[SessionCheck] Token is invalid. Clearing session.');
+          await AsyncStorage.removeItem('auth_token');
+          setIsChecking(false);
+        }
+      } catch (e) {
+        console.log('[SessionCheck] Unexpected error:', e);
+        setIsChecking(false);
+      }
+    };
+    
+    checkSession();
+  }, []);
+
+  if (isChecking) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <StatusBar barStyle="light-content" />
+        <Text style={[styles.logoText, { fontSize: 40 }]}>MakiDesu</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -20,7 +83,7 @@ export default function OnboardingScreen() {
         >
           <SafeAreaView style={styles.overlay} edges={['top', 'bottom']}>
             <Animated.View
-              entering={FadeInDown.delay(400).duration(1000).springify()}
+              entering={FadeInDown.delay(400).duration(1000)}
               style={styles.topContainer}
             >
               <Text style={styles.logoText}>MakiDesu</Text>
@@ -35,13 +98,13 @@ export default function OnboardingScreen() {
               </Animated.Text>
 
               <Animated.Text
-                entering={FadeInUp.delay(800).duration(1000).springify()}
+                entering={FadeInUp.delay(800).duration(1000)}
                 style={styles.heading}
               >
                 EXCEPTIONAL{'\n'}SUSHI TODAY.
               </Animated.Text>
 
-              <Animated.View entering={FadeInUp.delay(1000).duration(1000).springify()}>
+              <Animated.View entering={FadeInUp.delay(1000).duration(1000)}>
                 <ThemedButton
                   title="Get Started"
                   variant="dark"

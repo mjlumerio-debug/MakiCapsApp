@@ -3,7 +3,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { ThemedButton } from '@/components/ui/ThemedButton';
 import { ThemedInput } from '@/components/ui/ThemedInput';
 import { Colors, Typography } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
 import api from '@/lib/api';
 import { loginUser } from '@/lib/auth_api';
 import { resolveGoogleSmartLocation } from '@/lib/google_location';
@@ -28,7 +28,8 @@ import {
     Text,
     TouchableOpacity,
     View,
-    useWindowDimensions
+    useWindowDimensions,
+    BackHandler,
 } from 'react-native';
 import Animated, {
     FadeInDown,
@@ -86,13 +87,8 @@ const formatDeliveryAddress = (
 export default function LoginScreen() {
     const router = useRouter();
     const { height } = useWindowDimensions();
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
+    const { colors, isDark } = useAppTheme();
 
-    const backButtonScale = useSharedValue(1);
-    const animatedBackStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: backButtonScale.value }],
-    }));
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -122,6 +118,24 @@ export default function LoginScreen() {
         };
         loadCredentials();
     }, []);
+    
+    // Handle hardware back button on Android to prevent navigator "leak"
+    useEffect(() => {
+        const backAction = () => {
+            if (!router.canGoBack()) {
+                router.replace('/');
+                return true;
+            }
+            return false;
+        };
+
+        const backHandler = BackHandler.addEventListener(
+            'hardwareBackPress',
+            backAction
+        );
+
+        return () => backHandler.remove();
+    }, [router]);
 
     // Responsive scaling constants
     const isSmallScreen = height < 800;
@@ -293,7 +307,7 @@ export default function LoginScreen() {
                 style={StyleSheet.absoluteFillObject}
                 blurRadius={2}
             />
-            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(255, 255, 255, 0.4)' }]} />
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.5)' }]} />
 
             <SafeAreaView style={{ flex: 1 }}>
                 <KeyboardAvoidingView
@@ -307,57 +321,42 @@ export default function LoginScreen() {
                     >
                         <View style={styles.mainContent}>
                             <View style={styles.topSection}>
-                                <TouchableOpacity
-                                    onPress={() => router.back()}
-                                    onPressIn={() => {
-                                        backButtonScale.value = withSpring(0.8);
-                                    }}
-                                    onPressOut={() => {
-                                        backButtonScale.value = withSpring(1);
-                                    }}
-                                    style={styles.backButton}
-                                >
-                                    <Animated.View style={[animatedBackStyle, styles.backButtonInner, { backgroundColor: 'rgba(255, 255, 255, 0.8)' }]}>
-                                        <Ionicons name="chevron-back" size={24} color={theme.tint} />
-                                    </Animated.View>
-                                </TouchableOpacity>
-
                                 <Animated.View
-                                    entering={FadeInDown.duration(800).springify()}
+                                    entering={FadeInDown.duration(800)}
                                     style={styles.header}
                                 >
-                                    <Text style={[styles.title, { color: '#2D3436' }]}>
+                                    <Text style={[styles.title, { color: colors.heading }]}>
                                         Konnichiwa!
                                     </Text>
-                                    <Text style={[styles.brandText, { color: theme.tint }]}>
+                                    <Text style={[styles.brandText, { color: colors.primary }]}>
                                         Maki Desu
                                     </Text>
-                                    <Text style={[styles.subtitle, { color: '#636E72' }]}>
+                                    <Text style={[styles.subtitle, { color: colors.text }]}>
                                         Discover your favorite Japanese flavors today.
                                     </Text>
                                 </Animated.View>
                             </View>
 
                             <Animated.View
-                                entering={FadeInUp.delay(200).duration(1000).springify()}
-                                style={[styles.loginCard, { backgroundColor: 'rgba(255, 255, 255, 0.9)' }]}
+                                entering={FadeInUp.delay(200).duration(1000)}
+                                style={[styles.loginCard, { backgroundColor: colors.surface, shadowColor: colors.primary }]}
                             >
                                 <View style={styles.socialRow}>
-                                    <TouchableOpacity style={styles.socialIconButton}>
+                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <AntDesign name="google" size={22} color="#DB4437" />
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.socialIconButton}>
+                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <FontAwesome name="facebook" size={22} color="#4267B2" />
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.socialIconButton}>
-                                        <Ionicons name="logo-apple" size={22} color="#000000" />
+                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
+                                        <Ionicons name="logo-apple" size={22} color={colors.heading} />
                                     </TouchableOpacity>
                                 </View>
 
                                 <View style={styles.dividerRow}>
-                                    <View style={[styles.dividerLine, { backgroundColor: '#DFE6E9' }]} />
-                                    <Text style={styles.dividerLabel}>Or login with email</Text>
-                                    <View style={[styles.dividerLine, { backgroundColor: '#DFE6E9' }]} />
+                                    <View style={[styles.dividerLine, { backgroundColor: colors.primary + '1A' }]} />
+                                    <Text style={[styles.dividerLabel, { color: colors.text }]}>Or login with email</Text>
+                                    <View style={[styles.dividerLine, { backgroundColor: colors.primary + '1A' }]} />
                                 </View>
 
                                 <ErrorBanner message={authError} reservedHeight={40} />
@@ -368,14 +367,14 @@ export default function LoginScreen() {
                                         value={email}
                                         onChangeText={setEmail}
                                         keyboardType="email-address"
-                                        style={styles.input}
+                                        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border }]}
                                     />
                                     <ThemedInput
                                         placeholder="Password"
                                         value={password}
                                         onChangeText={setPassword}
                                         secureTextEntry
-                                        style={styles.input}
+                                        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border }]}
                                     />
                                 </View>
 
@@ -386,7 +385,7 @@ export default function LoginScreen() {
                                         onPress={() => setRememberMe(!rememberMe)}
                                     />
                                     <TouchableOpacity onPress={() => (router.push as any)('/forgot-password')}>
-                                        <Text style={[styles.forgotText, { color: theme.tint }]}>Forgot password?</Text>
+                                        <Text style={[styles.forgotText, { color: colors.primary }]}>Forgot password?</Text>
                                     </TouchableOpacity>
                                 </View>
 
@@ -395,13 +394,13 @@ export default function LoginScreen() {
                                     onPress={handleLogin}
                                     loading={isSubmitting}
                                     disabled={isSubmitting}
-                                    style={styles.signInButton}
+                                    style={[styles.signInButton, { shadowColor: colors.primary }]}
                                 />
 
                                 <View style={styles.signUpPrompt}>
-                                    <Text style={styles.signUpText}>New here? </Text>
+                                    <Text style={[styles.signUpText, { color: colors.text }]}>New here? </Text>
                                     <TouchableOpacity onPress={() => router.push('/signup')} activeOpacity={0.7}>
-                                        <Text style={[styles.signUpLink, { color: theme.tint }]}>Create an account</Text>
+                                        <Text style={[styles.signUpLink, { color: colors.primary }]}>Create an account</Text>
                                     </TouchableOpacity>
                                 </View>
 
@@ -424,7 +423,6 @@ export default function LoginScreen() {
                             </Animated.View>
                         </View>
 
-                        {/* Modals remain similar but styled for the new look */}
                         <Modal
                             animationType="slide"
                             transparent={true}
@@ -432,28 +430,28 @@ export default function LoginScreen() {
                             onRequestClose={() => setShowTermsModal(false)}
                         >
                             <View style={styles.modalOverlay}>
-                                <View style={[styles.modalContent, { backgroundColor: '#FFF' }]}>
+                                <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
                                     <View style={styles.modalHeader}>
-                                        <Text style={[styles.modalTitle, { color: theme.tint }]}>
+                                        <Text style={[styles.modalTitle, { color: colors.primary }]}>
                                             {modalType === 'terms' ? 'Terms of Service' : 'Privacy Policy'}
                                         </Text>
                                         <TouchableOpacity onPress={() => setShowTermsModal(false)}>
-                                            <Ionicons name="close" size={24} color="#2D3436" />
+                                            <Ionicons name="close" size={24} color={colors.heading} />
                                         </TouchableOpacity>
                                     </View>
                                     <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                                        <Text style={styles.modalBodyText}>
+                                        <Text style={[styles.modalBodyText, { color: colors.text }]}>
                                             {modalType === 'terms' ? `
-1. Welcome: Our app provides a premium Japanese dining experience.
-2. Quality: All dishes are prepared fresh upon order.
-3. Responsibility: Ensure your delivery details are accurate.
-4. Privacy: We value your data security above all else.
+ 1. Welcome: Our app provides a premium Japanese dining experience.
+ 2. Quality: All dishes are prepared fresh upon order.
+ 3. Responsibility: Ensure your delivery details are accurate.
+ 4. Privacy: We value your data security above all else.
                                             ` : `
-1. Data: we collect minimal data to improve your experience.
-2. Purpose: For order fulfillment and personalization.
-3. Protection: Industry-standard security protocols applied.
-4. Sharing: We never sell your data to third parties.
-                                            `}
+ 1. Data: we collect minimal data to improve your experience.
+ 2. Purpose: For order fulfillment and personalization.
+ 3. Protection: Industry-standard security protocols applied.
+ 4. Sharing: We never sell your data to third parties.
+                                             `}
                                         </Text>
                                     </ScrollView>
                                     <ThemedButton
@@ -470,18 +468,18 @@ export default function LoginScreen() {
                             visible={showSuccessModal}
                             animationType="none"
                         >
-                            <View style={styles.successOverlay}>
+                            <View style={[styles.successOverlay, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.9)' : 'rgba(255, 255, 255, 0.9)' }]}>
                                 <Animated.View style={[
                                     styles.successCircle,
                                     {
-                                        backgroundColor: theme.tint,
+                                        backgroundColor: colors.primary,
                                         transform: [{ scale: successScale }]
                                     }
                                 ]} />
                                 <Animated.View style={[{ zIndex: 10, alignItems: 'center' }, { transform: [{ scale: checkmarkScale }] }]}>
-                                    <Ionicons name="checkmark-circle" size={100} color="#FFF" />
-                                    <Text style={styles.successTitle}>Welcome Back!</Text>
-                                    <Text style={styles.successSubtitle}>Preparing your kitchen...</Text>
+                                    <Ionicons name="checkmark-circle" size={100} color={isDark ? colors.background : '#FFF'} />
+                                    <Text style={[styles.successTitle, { color: isDark ? colors.background : '#FFF' }]}>Welcome Back!</Text>
+                                    <Text style={[styles.successSubtitle, { color: isDark ? colors.background : '#FFF' }]}>Preparing your kitchen...</Text>
                                 </Animated.View>
                             </View>
                         </Modal>
@@ -495,7 +493,6 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F1E3',
     },
     mainContent: {
         flex: 1,
@@ -505,22 +502,6 @@ const styles = StyleSheet.create({
     topSection: {
         marginTop: 20,
         marginBottom: 30,
-    },
-    backButton: {
-        alignSelf: 'flex-start',
-        marginBottom: 24,
-    },
-    backButtonInner: {
-        width: 44,
-        height: 44,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 2,
     },
     header: {
         alignItems: 'flex-start',
@@ -592,10 +573,8 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     input: {
-        backgroundColor: '#F9FAFB',
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#F1F2F6',
     },
     actionRow: {
         flexDirection: 'row',
@@ -610,7 +589,6 @@ const styles = StyleSheet.create({
     signInButton: {
         height: 58,
         borderRadius: 18,
-        shadowColor: '#D82E3F',
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
         shadowRadius: 12,
