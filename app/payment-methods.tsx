@@ -1,13 +1,11 @@
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { requestPaymentLink, verifyPaymentOtp } from '@/lib/auth_api';
 import React, { useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Keyboard,
     KeyboardAvoidingView,
-    Modal,
     Platform,
     ScrollView,
     StatusBar,

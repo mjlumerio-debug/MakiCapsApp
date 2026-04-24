@@ -1,11 +1,8 @@
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert } from 'react-native';
-import { updateUserProfile } from '@/lib/auth_api';
+import { updateUserProfile, fetchCurrentUser } from '@/lib/auth_api';
 import {
     Image,
     KeyboardAvoidingView,
@@ -21,13 +18,12 @@ import {
     TouchableOpacity,
     View,
     Modal,
+    Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function PersonalInformationScreen() {
     const router = useRouter();
-    const colorScheme = useColorScheme() ?? 'light';
-    const theme = Colors[colorScheme];
     const insets = useSafeAreaInsets();
 
     const [fullName, setFullName] = useState('');
@@ -59,21 +55,43 @@ export default function PersonalInformationScreen() {
     const formAnim = useRef(new RNAnimated.Value(0)).current;
     const buttonAnim = useRef(new RNAnimated.Value(0)).current;
 
-    // Load user profile from AsyncStorage on mount
+    // Load user profile from Backend/AsyncStorage on mount
     useEffect(() => {
         const loadUserProfile = async () => {
             try {
-                const profileJson = await AsyncStorage.getItem('user_profile');
-                if (profileJson) {
-                    const profile = JSON.parse(profileJson);
-                    const first = profile.firstName || '';
-                    const last = profile.lastName || '';
-                    const name = `${first} ${last}`.trim();
+                // Try fetching fresh data from backend first
+                let profile;
+                try {
+                    console.log('[PersonalInformation] Fetching fresh profile from backend...');
+                    profile = await fetchCurrentUser();
+                    console.log('[PersonalInformation] Profile fetched successfully:', profile);
+                    // Update AsyncStorage with fresh data
+                    await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
+                } catch (apiError) {
+                    console.warn('[PersonalInformation] Backend fetch failed, falling back to local storage:', apiError);
+                    const profileJson = await AsyncStorage.getItem('user_profile');
+                    if (profileJson) {
+                        profile = JSON.parse(profileJson);
+                    }
+                }
+
+                if (profile) {
+                    // Map from common fields, prioritizing the ones from our API mapper
+                    const first = profile.firstName || profile.first_name || '';
+                    const last = profile.lastName || profile.last_name || '';
+                    const name = `${first} ${last}`.trim() || 'User Profile';
                     const userEmail = profile.email || '';
-                    // contactNumber from backend may include +63 prefix, strip it for display
-                    let userPhone = profile.contactNumber || '';
+                    
+                    // Prioritize database column name 'mobile_number' then 'contactNumber'
+                    let userPhone = profile.contactNumber || profile.mobile_number || profile.mobileNumber || '';
+                    
+                    // Strip prefixes for display logic
                     if (userPhone.startsWith('+63')) {
                         userPhone = userPhone.substring(3);
+                    } else if (userPhone.startsWith('0')) {
+                        userPhone = userPhone.substring(1);
+                    } else if (userPhone.startsWith('63')) {
+                        userPhone = userPhone.substring(2);
                     }
 
                     setFullName(name);
@@ -84,6 +102,8 @@ export default function PersonalInformationScreen() {
                     setTempFirstName(first);
                     setTempLastName(last);
                     setTempPhone(userPhone);
+                } else {
+                    console.log('[PersonalInformation] No profile data found in API or local storage.');
                 }
             } catch (e) {
                 console.error('Failed to load user profile:', e);

@@ -19,8 +19,10 @@ import {
 } from 'react-native';
 import RNMapView, { type Region } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import LocationCard from '../components/LocationCard';
 import MakiModal from '../components/MakiModal';
 import { MapView } from '../components/MapComponent';
+import { getNearbyLandmark } from '../lib/google_location';
 import { addAddress, updateAddress, useUiStore } from '../lib/ui_store';
 
 // Geocoding Helpers (Module Level for scope stability)
@@ -28,10 +30,46 @@ const normalize = (s: string) => s.toLowerCase().replace(/barangay|brgy|\.?\s+|[
 const isSubdivKeyword = (s: string) => /village|subdivision|subd|estate|heights|building|tower|condo|apartment|residences/i.test(s);
 const isStreetKeyword = (s: string) => /\b(street|st|rd|road|ave|avenue|highway|hway|blvd|boulevard|lane|ln)\b/i.test(s);
 const clean = (s: string) => (s || '').trim();
-const uniqueNonEmpty = (parts: string[]) => parts
-    .map(clean)
-    .filter(Boolean)
-    .filter((item, idx, arr) => idx === 0 || normalize(item) !== normalize(arr[idx - 1]));
+const containsAreaToken = (source: string, token: string): boolean => {
+    const sourceNorm = normalize(source);
+    const tokenNorm = normalize(token);
+    if (!sourceNorm || !tokenNorm) return false;
+    if (sourceNorm === tokenNorm) return true;
+    return tokenNorm.length >= 5 && sourceNorm.includes(tokenNorm);
+};
+const uniqueNonEmpty = (parts: string[]) => {
+    const result: string[] = [];
+    const seen = new Set<string>();
+
+    parts.forEach((part) => {
+        const cleaned = clean(part)
+            .replace(/\s*,\s*/g, ', ')
+            .replace(/,{2,}/g, ',')
+            .replace(/^,\s*|\s*,$/g, '');
+        if (!cleaned) return;
+
+        const key = normalize(cleaned);
+        if (!key || seen.has(key)) return;
+
+        const covered = result.some((existing) => containsAreaToken(existing, cleaned));
+        if (covered) return;
+
+        seen.add(key);
+        result.push(cleaned);
+    });
+
+    return result;
+};
+const REGION_LIKE_REGEX = /\b(calabarzon|mimaropa|western visayas|central visayas|eastern visayas|ncr|metro manila|region\s*[ivx0-9]+)\b/i;
+const pickSpecificProvince = (preferred: string, fallback: string): string => {
+    const p = sanitizeAddressPart(preferred || '');
+    const f = sanitizeAddressPart(fallback || '');
+    if (!p) return f;
+    if (!f) return p;
+    if (normalize(p) === normalize(f)) return p;
+    if (REGION_LIKE_REGEX.test(p) && !REGION_LIKE_REGEX.test(f)) return f;
+    return p;
+};
 const distanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const toRad = (v: number) => (v * Math.PI) / 180;
     const R = 6371000;
@@ -43,6 +81,56 @@ const distanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) 
         Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
+};
+const PLUS_CODE_REGEX = /\b[A-Z0-9]{2,8}\+[A-Z0-9]{2,}\b/i;
+const MIN_STREET_LENGTH = 5;
+
+const stripPlusCode = (value: string): string =>
+    clean(value).replace(PLUS_CODE_REGEX, '').replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').trim();
+
+const isUnclearAddress = (street: string, formattedAddress: string): boolean => {
+    const normalizedStreet = clean(street);
+    const normalizedFormatted = clean(formattedAddress);
+
+    return (
+        !normalizedStreet ||
+        normalizedStreet.length < MIN_STREET_LENGTH ||
+        normalizedStreet.includes('+') ||
+        PLUS_CODE_REGEX.test(normalizedStreet) ||
+        PLUS_CODE_REGEX.test(normalizedFormatted)
+    );
+};
+
+const buildHumanAddress = (street: string, city: string): string =>
+    uniqueNonEmpty([stripPlusCode(street), stripPlusCode(city)]).join(', ');
+
+const sanitizeAddressPart = (value: string): string => {
+    const cleaned = stripPlusCode(value);
+    if (!cleaned) return '';
+    if (PLUS_CODE_REGEX.test(cleaned)) return '';
+    return cleaned;
+};
+
+const formatDeliveryAddress = (
+    geo: { barangay?: string; city?: string; municipality?: string; province?: string },
+    establishmentName?: string
+): string => {
+    const line1 = sanitizeAddressPart(establishmentName || '');
+    const line2Parts = uniqueNonEmpty([
+        sanitizeAddressPart(geo.barangay || ''),
+        sanitizeAddressPart(geo.city || geo.municipality || ''),
+        sanitizeAddressPart(geo.province || ''),
+    ]);
+    const line2 = line2Parts.join(', ');
+
+    if (line1 && line2 && containsAreaToken(line1, line2)) {
+        return line1;
+    }
+
+    if (line1 && line2) {
+        return `${line1}\n${line2}`;
+    }
+    return line1 || line2;
 };
 
 export default function NewAddressScreen() {
@@ -62,6 +150,7 @@ export default function NewAddressScreen() {
     };
 
     const [markerCoord, setMarkerCoord] = useState({ latitude: 14.5995, longitude: 120.9842 });
+    const [userCoord, setUserCoord] = useState<{ latitude: number; longitude: number } | null>(null);
     const [isLoadingLocation, setIsLoadingLocation] = useState(false);
     const [isFetchingAddress, setIsFetchingAddress] = useState(false);
     const [showConfirmSaveModal, setShowConfirmSaveModal] = useState(false);
@@ -76,6 +165,7 @@ export default function NewAddressScreen() {
     const [province, setProvince] = useState('');
     const [fullAddress, setFullAddress] = useState('');
     const [selectedPinAddress, setSelectedPinAddress] = useState('');
+    const [isFallbackLabel, setIsFallbackLabel] = useState(false);
 
     // Search features
     const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
@@ -85,6 +175,7 @@ export default function NewAddressScreen() {
     const searchTimeout = useRef<any>(null);
     const geocodeTimeout = useRef<any>(null);
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         // Live search debouncing
         if (searchQuery.trim().length > 1 && isSearchModalVisible) {
@@ -98,6 +189,7 @@ export default function NewAddressScreen() {
         };
     }, [searchQuery]);
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         return () => {
             if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
@@ -105,14 +197,27 @@ export default function NewAddressScreen() {
     }, []);
 
     useEffect(() => {
-        // Construct full address from parts if it's being manually edited
-        const parts = [subdivision, street, barangay, city, province].filter(p => !!p && p.trim().length > 0);
+        // Keep full address aligned with parsed parts, while removing plus codes.
+        // If fallback formatter already produced a landmark-first label, do not overwrite it.
+        if (isFallbackLabel) {
+            return;
+        }
+        const parts = [subdivision, street, barangay, city, province]
+            .map((part) => sanitizeAddressPart(part))
+            .filter((part) => !!part);
         if (parts.length > 0) {
-            setFullAddress(parts.join(', '));
+            const composed = parts.join(', ');
+            setFullAddress((prev) => {
+                // Preserve an existing fallback landmark label if it is already more descriptive.
+                if (isFallbackLabel && clean(prev).length > clean(composed).length) {
+                    return prev;
+                }
+                return composed;
+            });
         } else if (!isFetchingAddress && !isEditing) {
             setFullAddress('');
         }
-    }, [subdivision, street, barangay, city, province]);
+    }, [subdivision, street, barangay, city, province, isFallbackLabel, isFetchingAddress, isEditing]);
 
     const hasLoadedRef = useRef(false);
 
@@ -167,6 +272,7 @@ export default function NewAddressScreen() {
                 longitude: location.coords.longitude,
             };
 
+            setUserCoord(newCoord);
             setMarkerCoord(newCoord);
             mapRef.current?.animateToRegion({
                 ...newCoord,
@@ -219,24 +325,71 @@ export default function NewAddressScreen() {
         const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
         if (!apiKey) return '';
         try {
-            const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${latitude},${longitude}&radius=100&type=establishment&key=${apiKey}`;
+            const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${latitude},${longitude}&radius=500&type=establishment&key=${apiKey}`;
             const response = await fetch(url);
             if (!response.ok) return '';
             const data = await response.json();
             if (data.status !== 'OK' || !data.results?.length) return '';
 
+            const nearest = data.results
+                .map((place: any) => {
+                    const loc = place?.geometry?.location;
+                    const name = sanitizeAddressPart(place?.name || '');
+                    if (!loc?.lat || !loc?.lng || !name || isStreetKeyword(name)) {
+                        return null;
+                    }
+                    const meters = distanceMeters(latitude, longitude, loc.lat, loc.lng);
+                    return { name, meters };
+                })
+                .filter(Boolean)
+                .sort((a: any, b: any) => a.meters - b.meters)[0];
+
+            if (nearest?.name) {
+                return nearest.name;
+            }
+
             const firstWithin100m = data.results.find((place: any) => {
                 const loc = place?.geometry?.location;
                 if (!loc?.lat || !loc?.lng) return false;
                 const meters = distanceMeters(latitude, longitude, loc.lat, loc.lng);
-                const name = clean(place?.name);
+                const name = sanitizeAddressPart(place?.name || '');
                 return meters <= 100 && !!name && !isStreetKeyword(name);
             });
 
-            return clean(firstWithin100m?.name || '');
+            return sanitizeAddressPart(firstWithin100m?.name || '');
         } catch (error) {
             console.log('Nearby establishment lookup failed:', error);
             return '';
+        }
+    };
+
+    const fetchNearestEstablishmentFromBackend = async (
+        latitude: number,
+        longitude: number
+    ): Promise<{
+        name: string;
+        barangay: string;
+        municipality: string;
+        province: string;
+    }> => {
+        try {
+            const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+            const nearestName = sanitizeAddressPart(
+                (await getNearbyLandmark(latitude, longitude, apiKey)) || ''
+            );
+            return {
+                name: nearestName,
+                barangay: '',
+                municipality: '',
+                province: '',
+            };
+        } catch {
+            return {
+                name: '',
+                barangay: '',
+                municipality: '',
+                province: '',
+            };
         }
     };
 
@@ -390,23 +543,58 @@ export default function NewAddressScreen() {
                 }
             }
 
-            // COMMIT ALL RESULTS
-            setBarangay(masterBarangay);
-            setStreet(masterStreet);
-            setSubdivision(masterSubdiv);
-            setCity(masterCity);
-            setProvince(masterProvince);
+            const safeBarangay = sanitizeAddressPart(masterBarangay);
+            const safeStreet = sanitizeAddressPart(masterStreet);
+            const safeSubdiv = sanitizeAddressPart(masterSubdiv);
+            const safeCity = sanitizeAddressPart(masterCity);
+            const safeProvince = sanitizeAddressPart(masterProvince);
 
-            const areaOnlyAddress = uniqueNonEmpty([nearbyEstablishment, masterBarangay, masterCity, masterProvince]).join(', ');
-            const withStreetAddress = uniqueNonEmpty([masterSubdiv, masterStreet, masterBarangay, masterCity, masterProvince]).join(', ');
-            const hasStreet = !!clean(masterStreet);
+            // COMMIT ALL RESULTS
+            setBarangay(safeBarangay);
+            setStreet(safeStreet);
+            setSubdivision(safeSubdiv);
+            setCity(safeCity);
+            setProvince(safeProvince);
+
+            const areaOnlyAddress = uniqueNonEmpty([nearbyEstablishment, safeBarangay, safeCity, safeProvince]).join(', ');
+            const withStreetAddress = uniqueNonEmpty([safeSubdiv, safeStreet, safeBarangay, safeCity, safeProvince]).join(', ');
+            const hasStreet = !!clean(safeStreet);
             const cleanedGoogleFormatted = clean(masterFullAddress);
             const hasPlusCode = /\b[A-Z0-9]{2,8}\+[A-Z0-9]{2,}\b/i.test(cleanedGoogleFormatted);
             const finalAddress = hasStreet
                 ? (cleanedGoogleFormatted && !hasPlusCode ? cleanedGoogleFormatted : withStreetAddress)
                 : areaOnlyAddress;
+            const invalidDisplayAddress = isUnclearAddress(safeStreet, finalAddress || cleanedGoogleFormatted);
+            const nearest = await fetchNearestEstablishmentFromBackend(latitude, longitude);
+            const selectedPlaceName = sanitizeAddressPart(passedName || '');
+            const establishmentCandidate =
+                selectedPlaceName ||
+                nearest.name ||
+                sanitizeAddressPart(nearbyEstablishment) ||
+                sanitizeAddressPart(safeSubdiv) ||
+                '';
+            const geoAreaCandidate = uniqueNonEmpty([safeBarangay, safeCity, safeProvince]).join(', ');
+            const preferredEstablishment = containsAreaToken(establishmentCandidate, geoAreaCandidate)
+                ? ''
+                : establishmentCandidate;
 
-            setFullAddress(finalAddress || withStreetAddress || areaOnlyAddress);
+            const geoFromBackend = {
+                barangay: safeBarangay || nearest.barangay,
+                municipality: safeCity || nearest.municipality,
+                province: pickSpecificProvince(nearest.province, safeProvince),
+            };
+
+            const formattedTwoLine = formatDeliveryAddress(geoFromBackend, preferredEstablishment);
+            const humanAddress = buildHumanAddress(safeStreet, safeCity);
+            const displayLabel = stripPlusCode(
+                formattedTwoLine ||
+                (invalidDisplayAddress
+                    ? (areaOnlyAddress || finalAddress)
+                    : (humanAddress || finalAddress || withStreetAddress || areaOnlyAddress))
+            );
+
+            setIsFallbackLabel(invalidDisplayAddress || !!preferredEstablishment);
+            setFullAddress(displayLabel || withStreetAddress || areaOnlyAddress);
 
         } catch (error) {
             console.error('Final Aggregation Geocoding error:', error);
@@ -502,7 +690,8 @@ export default function NewAddressScreen() {
         mapRef.current?.animateToRegion(newRegion, 800);
 
         if (fullDisplayName) {
-            setFullAddress(fullDisplayName);
+            setIsFallbackLabel(false);
+            setFullAddress(stripPlusCode(fullDisplayName));
         }
 
         let deepDetails = null;
@@ -515,7 +704,7 @@ export default function NewAddressScreen() {
 
     const handleSelectDeliveryAddress = () => {
         if (!fullAddress || isFetchingAddress) return;
-        setSelectedPinAddress(fullAddress);
+        setSelectedPinAddress(stripPlusCode(fullAddress));
     };
 
     const handleAddDetails = () => {
@@ -536,7 +725,7 @@ export default function NewAddressScreen() {
             subdivision: subdivision || '',
             city: city || '',
             province: province || '',
-            notes: '',
+            notes: isFallbackLabel ? 'landmark-fallback' : '',
             latitude: markerCoord.latitude,
             longitude: markerCoord.longitude,
         };
@@ -565,6 +754,30 @@ export default function NewAddressScreen() {
     const pinnedDetailParts = uniqueNonEmpty([subdivision, street, barangay, city, province]);
     const hasSelectedPin = !!selectedPinAddress;
     const livePinLabel = uniqueNonEmpty([barangay, city, province]).join(', ');
+    const currentPinLabel = hasSelectedPin ? selectedPinAddress : (fullAddress || 'Move the map pin to detect location');
+    const pinLabelLines = currentPinLabel.split('\n').map((line) => line.trim()).filter(Boolean);
+    const pinTitle = sanitizeAddressPart(
+        pinLabelLines[0]?.split(',')[0] ||
+        subdivision ||
+        street ||
+        'Pinned Location'
+    );
+    const pinDetailLine = sanitizeAddressPart(
+        pinLabelLines[1] ||
+        currentPinLabel ||
+        livePinLabel ||
+        pinnedDetailParts.join(', ')
+    );
+    const distanceFromUserMeters = userCoord
+        ? Math.round(
+            distanceMeters(
+                markerCoord.latitude,
+                markerCoord.longitude,
+                userCoord.latitude,
+                userCoord.longitude
+            )
+        )
+        : 0;
 
     return (
         <SafeAreaView style={styles.container}>
@@ -642,36 +855,19 @@ export default function NewAddressScreen() {
                         <Text style={styles.bottomNoteText}>Your order will be delivered to the pinned location.</Text>
                     </View>
 
-                    <View style={[styles.pinDetailsCard, hasSelectedPin ? styles.pinDetailsCardActive : null]}>
-                        <View style={styles.pinDetailsHeader}>
-                            <Text style={styles.pinDetailsTitle}>Pinned location details</Text>
-                            <View style={[styles.pinStatusPill, hasSelectedPin ? styles.pinStatusPillActive : null]}>
-                                <Text style={[styles.pinStatusText, hasSelectedPin ? styles.pinStatusTextActive : null]}>
-                                    {hasSelectedPin ? 'Selected' : 'Not selected'}
-                                </Text>
-                            </View>
-                        </View>
-
-                        <Text style={styles.pinPrimaryAddress} numberOfLines={2}>
-                            {hasSelectedPin ? selectedPinAddress : (fullAddress || 'Move the map pin to detect location')}
-                        </Text>
-
-                        <Text style={styles.pinMetaText} numberOfLines={1}>
-                            {livePinLabel || 'Location details loading...'}
-                        </Text>
-
-                        <View style={styles.pinCoordsRow}>
-                            <Text style={styles.pinCoordsText}>Lat {markerCoord.latitude.toFixed(6)}</Text>
-                            <Text style={styles.pinCoordsDot}>|</Text>
-                            <Text style={styles.pinCoordsText}>Lng {markerCoord.longitude.toFixed(6)}</Text>
-                        </View>
-
-                        {pinnedDetailParts.length > 0 ? (
-                            <Text style={styles.pinExtraText} numberOfLines={1}>
-                                {pinnedDetailParts.join(' | ')}
-                            </Text>
-                        ) : null}
-                    </View>
+                    <LocationCard
+                        landmark={pinTitle || 'Pinned Location'}
+                        address={livePinLabel || pinDetailLine || 'Pin your exact spot on the map.'}
+                        distanceText={
+                            distanceFromUserMeters > 0
+                                ? `${distanceFromUserMeters} m away from your location`
+                                : 'Detecting exact distance...'
+                        }
+                        buttonText="Select Address"
+                        selected={hasSelectedPin}
+                        disabled={!fullAddress || isFetchingAddress}
+                        onPress={handleSelectDeliveryAddress}
+                    />
 
                     <View style={styles.bottomDivider} />
                     <TouchableOpacity
@@ -962,74 +1158,63 @@ const styles = StyleSheet.create({
     },
     pinDetailsCard: {
         marginTop: 12,
-        padding: 12,
-        borderRadius: 12,
+        padding: 14,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#EAD9CE',
-        backgroundColor: '#FFFCFA',
+        borderColor: '#D9D9D9',
+        backgroundColor: '#FFFFFF',
     },
     pinDetailsCardActive: {
-        borderColor: '#F6C9AB',
-        backgroundColor: '#FFF7F1',
+        borderColor: '#CFCFCF',
+        backgroundColor: '#FFFFFF',
     },
-    pinDetailsHeader: {
+    pinHeaderRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 6,
+        alignItems: 'flex-start',
+        marginBottom: 8,
     },
-    pinDetailsTitle: {
-        fontSize: 12,
+    pinTitleIconWrap: {
+        marginTop: 1,
+        marginRight: 8,
+    },
+    pinTitleText: {
+        flex: 1,
+        fontSize: 20,
+        lineHeight: 28,
         fontWeight: '700',
-        color: '#67554B',
-        textTransform: 'uppercase',
-        letterSpacing: 0.3,
+        color: '#2F2F35',
+        minWidth: 0,
     },
-    pinStatusPill: {
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 10,
-        backgroundColor: '#EFE7E0',
+    pinDetailText: {
+        fontSize: 18,
+        color: '#3C3C42',
+        lineHeight: 28,
     },
-    pinStatusPillActive: {
-        backgroundColor: '#FDE7D7',
+    pinDistanceText: {
+        marginTop: 6,
+        fontSize: 16,
+        color: '#787881',
+        lineHeight: 24,
     },
-    pinStatusText: {
-        fontSize: 11,
-        color: '#7A6C63',
-        fontWeight: '600',
-    },
-    pinStatusTextActive: {
-        color: '#C35C1F',
-    },
-    pinPrimaryAddress: {
-        fontSize: 14,
-        color: '#2F211A',
-        fontWeight: '600',
-        lineHeight: 20,
-    },
-    pinMetaText: {
-        marginTop: 4,
-        fontSize: 12,
-        color: '#7C6C63',
-    },
-    pinCoordsRow: {
-        marginTop: 8,
+    pinSelectBtn: {
+        marginTop: 16,
+        borderWidth: 2,
+        borderColor: '#96969B',
+        borderRadius: 999,
+        height: 58,
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: '#FFFFFF',
     },
-    pinCoordsText: {
-        fontSize: 11,
-        color: '#7C6C63',
+    pinSelectBtnDisabled: {
+        opacity: 0.45,
     },
-    pinCoordsDot: {
-        marginHorizontal: 6,
-        color: '#B7A69B',
-    },
-    pinExtraText: {
-        marginTop: 6,
-        fontSize: 11,
-        color: '#7C6C63',
+    pinSelectBtnText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#2C2C2C',
     },
     bottomDivider: {
         marginTop: 10,

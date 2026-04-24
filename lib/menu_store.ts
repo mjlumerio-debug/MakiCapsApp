@@ -1,5 +1,6 @@
-import { getApiBaseUrl, requestJson } from '@/lib/api_client';
-import api from '@/lib/api';
+import { requestJson } from '@/lib/api_client';
+import api, { getApiBaseUrl } from '@/lib/api';
+import { getUiStoreSnapshot, setSelectedBranch } from '@/lib/ui_store';
 import { useSyncExternalStore } from 'react';
 import type { ImageSourcePropType } from 'react-native';
 
@@ -17,6 +18,9 @@ export type Food = {
   price: string;
   category: string;
   description: string;
+  stock?: number;
+  max_quantity?: number;
+  is_available: boolean;
 };
 
 type MenuState = {
@@ -61,6 +65,9 @@ type ApiMenuItem = {
   id: number;
   title?: string;
   name?: string;
+  branch?: { id?: number | string } | null;
+  branch_id?: number | string;
+  branchId?: number | string;
   price?: number | string;
   selling_price?: number | string;
   calories?: number | null;
@@ -69,8 +76,18 @@ type ApiMenuItem = {
   image?: string | null;
   category_name?: string;
   category?: string;
+  category_id?: number | string | null;
+  category_id_?: number | string | null;
   ingredients?: string | null;
   description?: string | null;
+  stock?: number | string | null;
+  available_stock?: number | string | null;
+  dynamic_stock?: number | string | null;
+  computed_stock?: number | string | null;
+  current_stock?: number | string | null;
+  stock_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  is_available?: boolean | number | string | null;
 };
 
 type ImageOption = {
@@ -176,13 +193,7 @@ const parseCalories = (value: number | string | null | undefined): string => {
 
 const resolveImagePath = (imagePath: string | null | undefined): string | undefined => {
   if (!imagePath) return undefined;
-  // Build URL from the Laravel storage path
-  const baseUrl = process.env.EXPO_PUBLIC_API_URL || '';
-  
-  // Strip /api/v1 and /index.php from base to get the server root (the 'public' directory)
-  const serverRoot = baseUrl
-    .replace(/\/api\/v1\/?$/, '')
-    .replace(/\/index\.php\/?$/, '');
+  const serverRoot = getApiBaseUrl().replace(/\/api\/v1\/?$/, '');
 
   // If it's already a full URL, attempt to fix mismatched local IP addresses stored in the DB
   if (imagePath.startsWith('http')) {
@@ -216,9 +227,90 @@ const normalizeCategories = (categories: ApiCategory[]): Category[] => {
 
 
 
-const mapApiMenuItems = (rows: ApiMenuItem[]): Food[] =>
-  rows.map((row) => {
-    let descriptionText = row.description || row.ingredients || '';
+const getArrayPayload = (value: any): any[] => {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.products)) return value.products;
+  if (Array.isArray(value?.data?.products)) return value.data.products;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.data?.data)) return value.data.data;
+  if (Array.isArray(value?.data?.rows)) return value.data.rows;
+  if (Array.isArray(value?.data?.items)) return value.data.items;
+  if (Array.isArray(value?.products?.data)) return value.products.data;
+  if (Array.isArray(value?.items)) return value.items;
+  return [];
+};
+
+const extractResponseBranchId = (value: any): number | null => {
+  const branchId =
+    value?.selected_branch_id ??
+    value?.branch_id ??
+    value?.branch?.id ??
+    value?.data?.branch?.id ??
+    value?.selected_branch?.id ??
+    value?.data?.branch_id;
+  const numeric = Number(branchId);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const extractResponseProductsCount = (value: any): number | null => {
+  const count =
+    value?.products_count ??
+    value?.data?.products_count ??
+    (Array.isArray(value?.products) ? value.products.length : null) ??
+    (Array.isArray(value?.data?.products) ? value.data.products.length : null);
+  const numeric = Number(count);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const extractBranchId = (row: ApiMenuItem): number | null => {
+  const direct = row.branch_id ?? row.branchId ?? row.branch?.id;
+  const numeric = Number(direct);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const filterRowsByBranchId = (rows: ApiMenuItem[], branchId: number | null): ApiMenuItem[] => {
+  if (!branchId) return rows;
+  // Strict mode: only keep rows that explicitly match selected branch id.
+  // This prevents mixed products from multiple branches.
+  return rows.filter((row) => extractBranchId(row) === branchId);
+};
+
+const mapApiMenuItems = (
+  rows: ApiMenuItem[],
+  categories: ApiCategory[]
+): Food[] => {
+  const categoryNameById = new Map<string, string>();
+  categories.forEach((cat) => {
+    categoryNameById.set(String(cat.id), cat.name);
+  });
+
+  return rows.map((row) => {
+    const descriptionText = row.description || row.ingredients || '';
+    const categoryId = row.category_id ?? row.category_id_;
+    const categoryFromId = categoryId !== null && categoryId !== undefined
+      ? categoryNameById.get(String(categoryId))
+      : undefined;
+    const maxQuantityCandidate =
+      row.max_quantity ??
+      row.available_stock ??
+      row.dynamic_stock ??
+      row.computed_stock ??
+      row.current_stock ??
+      row.stock_quantity ??
+      row.stock;
+    const parsedMaxQuantity = Number(maxQuantityCandidate);
+    const hasNumericMaxQuantity = Number.isFinite(parsedMaxQuantity);
+    const availabilityText = String(row.is_available ?? '').toLowerCase();
+    const inferredAvailability =
+      row.is_available === true ||
+      row.is_available === 1 ||
+      row.is_available === '1' ||
+      availabilityText === 'true' ||
+      availabilityText === 'available' ||
+      availabilityText === 'in_stock';
+    const normalizedMaxQuantity = hasNumericMaxQuantity
+      ? Math.max(0, parsedMaxQuantity)
+      : (inferredAvailability ? 1 : 0);
 
     return {
       id: String(row.id),
@@ -226,10 +318,14 @@ const mapApiMenuItems = (rows: ApiMenuItem[]): Food[] =>
       image: resolveImage(row.image_path || row.image || row.image_url),
       calories: parseCalories(row.calories),
       price: formatPeso(row.selling_price !== undefined ? row.selling_price : (row.price || 0)),
-      category: row.category || row.category_name || 'All',
+      category: row.category || row.category_name || categoryFromId || 'All',
       description: descriptionText,
+      stock: normalizedMaxQuantity,
+      max_quantity: normalizedMaxQuantity,
+      is_available: inferredAvailability,
     };
   });
+};
 
 const getImageKeyFromSource = (image: ImageSourcePropType): string => {
   const keys = Object.keys(menuImageUrls);
@@ -253,12 +349,26 @@ export const refreshMenuStore = async (): Promise<boolean> => {
   if (isRefreshing) return state.dbConnected;
   isRefreshing = true;
   try {
+    const uiState = getUiStoreSnapshot();
+    const activeAddress = uiState.addresses.find(a => a.id === uiState.activeAddressId);
+    const selectedBranch = uiState.selectedBranch;
+    const selectedBranchId = selectedBranch?.id ?? null;
+
+    // Get coordinates from active address first, then selected branch as fallback.
+    const lat = activeAddress?.latitude ?? selectedBranch?.latitude;
+    const lng = activeAddress?.longitude ?? selectedBranch?.longitude;
+
+    // Master catalog mode: Allow fetching even without coordinates if backend supports it
+    // or if we want to show a "Soft Menu" preview.
+    const hasCoordinates = lat !== undefined && lng !== undefined;
+
     // Fetch categories from the Laravel API
     let fetchedCategories: ApiCategory[] = [];
     try {
-      const catResponse = await api.get('/categories');
+      const catResponse = await api.get('/categories', {
+        params: selectedBranchId ? { branch_id: selectedBranchId } : (lat && lng ? { lat, lng } : undefined),
+      });
       const catData = catResponse.data;
-      // Handle both { data: [...] } and direct array responses
       const catArray = Array.isArray(catData) ? catData : (catData.data || catData.categories || []);
       if (Array.isArray(catArray) && catArray.length > 0) {
         fetchedCategories = catArray.map((c: any) => ({
@@ -269,26 +379,65 @@ export const refreshMenuStore = async (): Promise<boolean> => {
       }
     } catch (catError) {
       if (__DEV__) {
-        console.log('Failed to fetch categories from API, using static fallback:', catError);
+        console.log('Failed to fetch categories from API:', catError);
       }
     }
 
-    // Fetch products from the Laravel API
+    // Fetch products from the Laravel API using location-based detection
     let fetchedMenuItems: ApiMenuItem[] = [];
+    let apiBranchInfo: any = null;
+
     try {
-      const prodResponse = await api.get('/products');
-      const prodData = prodResponse.data;
-      fetchedMenuItems = Array.isArray(prodData) ? prodData : (prodData.data || prodData.products || []);
-    } catch (prodError) {
+      const params: any = {};
+      if (hasCoordinates) {
+        params.lat = lat;
+        params.lng = lng;
+      }
+
+      if (selectedBranchId) {
+        params.branch_id = selectedBranchId;
+      }
+
       if (__DEV__) {
-        console.log('Failed to fetch products from API:', prodError);
+        console.log('[MenuStore] Fetching products via params:', params);
+      }
+
+      const response = await api.get('/customer/products', { params });
+      const payload = response.data;
+      
+      // Use API response products directly (No manual filtering)
+      const rows = getArrayPayload(payload) as ApiMenuItem[];
+      
+      apiBranchInfo = payload.branch || payload.data?.branch || null;
+
+      // If backend returned a branch, update ui_store
+      if (apiBranchInfo && apiBranchInfo.id) {
+        setSelectedBranch({
+          id: Number(apiBranchInfo.id),
+          name: apiBranchInfo.name,
+          address: apiBranchInfo.address,
+          latitude: apiBranchInfo.latitude ? Number(apiBranchInfo.latitude) : undefined,
+          longitude: apiBranchInfo.longitude ? Number(apiBranchInfo.longitude) : undefined,
+          delivery_radius_km: apiBranchInfo.delivery_radius_km ? Number(apiBranchInfo.delivery_radius_km) : undefined,
+        });
+      }
+
+      // No more local filtering - use exactly what the backend sends
+      fetchedMenuItems = rows;
+
+      if (__DEV__) {
+        console.log('[MenuStore] Products loaded from API:', fetchedMenuItems.length);
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.log('[MenuStore] API Request FAILED:', error);
       }
     }
 
     setState((prev) => ({
       ...prev,
       categories: normalizeCategories(fetchedCategories),
-      menuItems: mapApiMenuItems(fetchedMenuItems),
+      menuItems: mapApiMenuItems(fetchedMenuItems, fetchedCategories),
       dbConnected: true,
       lastError: null,
     }));
@@ -439,4 +588,3 @@ export const useMenuStore = (): MenuState =>
   useSyncExternalStore(subscribeMenuStore, getMenuStoreSnapshot, getMenuStoreSnapshot);
 
 export { getApiBaseUrl };
-

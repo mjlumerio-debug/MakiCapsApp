@@ -21,7 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useMenuStore } from '../lib/menu_store';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 const DELIVERY_FEE = 38.00;
 
 // TypeScript Interfaces
@@ -65,7 +65,7 @@ export default function OrderScreen() {
     }, [initialCart]);
 
     // 2. State for Address, Payment, and Summary Collapse
-    const [address, setAddress] = useState('123 Sakura St. Brgy. Kaginhawaan, Quezon City, Metro Manila');
+    const [address] = useState('123 Sakura St. Brgy. Kaginhawaan, Quezon City, Metro Manila');
     const [selectedCategory, setSelectedCategory] = useState('E-Wallet');
     const [selectedMethod, setSelectedMethod] = useState('GCash');
     const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false);

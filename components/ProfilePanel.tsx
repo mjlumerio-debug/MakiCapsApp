@@ -1,11 +1,14 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { fetchCurrentUser } from '@/lib/auth_api';
 import { setUserId } from '@/lib/ui_store';
 import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
     Animated as RNAnimated,
@@ -16,7 +19,6 @@ import {
     TextInput,
     TouchableOpacity,
     View,
-    Alert,
 } from 'react-native';
 
 type ProfilePanelProps = {
@@ -58,6 +60,58 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [displayName, setDisplayName] = useState('Guest User');
+    const [displayEmail, setDisplayEmail] = useState('No email available');
+    const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const hydrateProfile = async (): Promise<void> => {
+            try {
+                const cachedProfile = await AsyncStorage.getItem('user_profile');
+                if (cachedProfile && mounted) {
+                    const parsed = JSON.parse(cachedProfile);
+                    const localName = `${parsed.firstName || ''} ${parsed.lastName || ''}`.trim();
+                    setDisplayName(localName || 'Guest User');
+                    setDisplayEmail(parsed.email || 'No email available');
+                }
+            } catch (error) {
+                console.error('Failed to read cached user profile', error);
+            }
+
+            try {
+                const user = await fetchCurrentUser();
+                if (!mounted) return;
+
+                const fullName = `${user.firstName} ${user.lastName}`.trim();
+                setDisplayName(fullName || 'Guest User');
+                setDisplayEmail(user.email || 'No email available');
+
+                await AsyncStorage.setItem(
+                    'user_profile',
+                    JSON.stringify({
+                        firstName: user.firstName,
+                        lastName: user.lastName,
+                        email: user.email,
+                        contactNumber: user.contactNumber,
+                    })
+                );
+            } catch (error) {
+                console.error('Failed to fetch authenticated user profile', error);
+            } finally {
+                if (mounted) {
+                    setIsLoadingProfile(false);
+                }
+            }
+        };
+
+        hydrateProfile();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
 
     const handleLogout = () => {
         setUserId(null);
@@ -188,8 +242,11 @@ export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
                             <MaterialIcons name="verified" size={14} color="#FFFFFF" />
                         </View>
                     </View>
-                    <Text style={[styles.name, { color: '#2C2C2C' }]}>Mark Lumerio</Text>
-                    <Text style={styles.email}>mjlumerio@gmail.com</Text>
+                    {isLoadingProfile ? (
+                        <ActivityIndicator size="small" color="#FF5800" style={{ marginBottom: 8 }} />
+                    ) : null}
+                    <Text style={[styles.name, { color: '#2C2C2C' }]}>{displayName}</Text>
+                    <Text style={styles.email}>{displayEmail}</Text>
                 </View>
 
                 {/* Menu items */}

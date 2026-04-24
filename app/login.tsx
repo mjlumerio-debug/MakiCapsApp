@@ -4,13 +4,22 @@ import { ThemedButton } from '@/components/ui/ThemedButton';
 import { ThemedInput } from '@/components/ui/ThemedInput';
 import { Colors, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import api from '@/lib/api';
 import { loginUser } from '@/lib/auth_api';
-import { setUserId } from '@/lib/ui_store';
+import { resolveGoogleSmartLocation } from '@/lib/google_location';
+import {
+    resolveAndSetBestActiveAddress,
+    setSelectedBranch,
+    setUserId,
+    upsertAutoDetectedAddress
+} from '@/lib/ui_store';
 import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
+    Image,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -32,6 +41,47 @@ import Animated, {
     withTiming
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+const BACKGROUND_IMAGE = 'C:\\Users\\Mark\\.gemini\\antigravity\\brain\\83ea3caa-9c54-471f-8005-65dae01c5475\\cozy_japanese_cafe_bg_1776885520916.png';
+const PLUS_CODE_REGEX = /\b[A-Z0-9]{2,8}\+[A-Z0-9]{2,}\b/i;
+
+const stripPlusCode = (value: string): string =>
+    String(value || '')
+        .replace(PLUS_CODE_REGEX, '')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/,\s*,/g, ',')
+        .trim();
+
+const GENERIC_LABEL_REGEX = /\b(current\s*location|unknown|unnamed|pin\s*location)\b/i;
+
+const isInvalidLabel = (label: string): boolean => {
+    const cleaned = stripPlusCode(label);
+    return (
+        !cleaned ||
+        cleaned.length < 6 ||
+        PLUS_CODE_REGEX.test(String(label || '')) ||
+        GENERIC_LABEL_REGEX.test(cleaned)
+    );
+};
+
+const formatDeliveryAddress = (
+    geo: { barangay?: string; city?: string; municipality?: string; province?: string },
+    establishmentName?: string
+): string => {
+    const line1 = stripPlusCode(establishmentName || '');
+    const line2 = [
+        stripPlusCode(geo.barangay || ''),
+        stripPlusCode(geo.city || geo.municipality || ''),
+        stripPlusCode(geo.province || ''),
+    ]
+        .filter(Boolean)
+        .join(', ');
+
+    if (line1 && line2) {
+        return `${line1}\n${line2}`;
+    }
+    return line1 || line2;
+};
 
 export default function LoginScreen() {
     const router = useRouter();
@@ -76,7 +126,100 @@ export default function LoginScreen() {
     // Responsive scaling constants
     const isSmallScreen = height < 800;
     const isExtraSmall = height < 650;
-    const verticalGap = isExtraSmall ? 6 : (isSmallScreen ? 12 : 32);
+    const detectBranchAndAddressAfterLogin = async (): Promise<void> => {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== 'granted') {
+            return;
+        }
+
+        const location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+        });
+        const latitude = location.coords.latitude;
+        const longitude = location.coords.longitude;
+
+        const geocoded = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const firstAddress = geocoded[0];
+
+        let street = stripPlusCode(
+            firstAddress?.street ||
+            firstAddress?.name ||
+            firstAddress?.district ||
+            'Current Location'
+        );
+        const city = stripPlusCode(
+            firstAddress?.city ||
+            firstAddress?.subregion ||
+            ''
+        );
+        const province = stripPlusCode(
+            firstAddress?.region ||
+            firstAddress?.country ||
+            ''
+        );
+        const barangay = stripPlusCode(firstAddress?.district || '');
+        let subdivision = stripPlusCode(firstAddress?.name || '');
+
+        let formatted = [street, city, province].filter(Boolean).join(', ');
+        const smart = await resolveGoogleSmartLocation(
+            latitude,
+            longitude,
+            process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || ''
+        );
+        const smartLandmark = stripPlusCode(smart.landmark || '');
+        const smartBarangay = stripPlusCode(smart.barangay || barangay);
+        const smartCity = stripPlusCode(smart.city || city);
+        const smartProvince = stripPlusCode(smart.province || province);
+
+        if (smartLandmark && !isInvalidLabel(smartLandmark)) {
+            formatted = formatDeliveryAddress(
+                {
+                    barangay: smartBarangay,
+                    municipality: smartCity,
+                    province: smartProvince,
+                },
+                smartLandmark
+            );
+            subdivision = smartLandmark;
+            if (!street || isInvalidLabel(street)) {
+                street = smartLandmark;
+            }
+        } else if (!isInvalidLabel(smart.smartAddress)) {
+            formatted = stripPlusCode(smart.smartAddress);
+        } else if (isInvalidLabel(formatted)) {
+            const labelParts = [smartBarangay, smartCity, smartProvince].filter(Boolean);
+            formatted = labelParts.join(', ');
+        }
+
+        upsertAutoDetectedAddress({
+            latitude,
+            longitude,
+            street,
+            barangay: smartBarangay || barangay,
+            subdivision,
+            city: smartCity || city,
+            province: smartProvince || province,
+            fullAddress: formatted || 'Current Location',
+        });
+        resolveAndSetBestActiveAddress({ latitude, longitude });
+
+        const productsResponse = await api.get('/customer/products', {
+            params: { lat: latitude, lng: longitude },
+        });
+        const branch = productsResponse?.data?.branch;
+        if (branch?.id) {
+            setSelectedBranch({
+                id: Number(branch.id),
+                name: branch.name || 'Nearest Branch',
+                address: branch.address || '',
+                latitude: Number(branch.latitude),
+                longitude: Number(branch.longitude),
+                delivery_radius_km: Number(branch.delivery_radius_km),
+                status: branch.status === 'closed' ? 'closed' : 'open',
+                status_text: branch.status_text,
+            });
+        }
+    };
 
     const handleLogin = async () => {
         const cleanEmail = email.trim().toLowerCase();
@@ -96,10 +239,8 @@ export default function LoginScreen() {
             setIsSubmitting(true);
             const user = await loginUser({ email: cleanEmail, password });
 
-            // Set the active user ID for fetching favorites later
             setUserId(user.id);
 
-            // Persist user profile data for other screens (e.g., Personal Information)
             await AsyncStorage.setItem('user_profile', JSON.stringify({
                 firstName: user.firstName,
                 lastName: user.lastName,
@@ -107,7 +248,12 @@ export default function LoginScreen() {
                 contactNumber: user.contactNumber,
             }));
 
-            // Handle Remember Me
+            try {
+                await detectBranchAndAddressAfterLogin();
+            } catch (locationError) {
+                console.log('Location/branch auto-detection skipped:', locationError);
+            }
+
             if (rememberMe) {
                 await AsyncStorage.setItem('remembered_email', cleanEmail);
                 await AsyncStorage.setItem('remembered_password', password);
@@ -116,22 +262,18 @@ export default function LoginScreen() {
                 await AsyncStorage.removeItem('remembered_password');
             }
 
-            // Show success animation
             setShowSuccessModal(true);
 
-            // Plot twist: Expand smoothly, barely pause, then snap shrink back to 0
             successScale.value = withSequence(
                 withTiming(100, { duration: 900 }),
-                withDelay(100, withTiming(0, { duration: 350 })) // Reduced delay and faster shrink
+                withDelay(100, withTiming(0, { duration: 350 }))
             );
 
-            // Checkmark disappears earlier to sync with shrink
             checkmarkScale.value = withSequence(
                 withSpring(1, { damping: 14, stiffness: 120 }),
                 withDelay(800, withTiming(0, { duration: 250 }))
             );
 
-            // Redirect as soon as it shrinks back to zero
             setTimeout(() => {
                 setShowSuccessModal(false);
                 router.replace('/home_dashboard');
@@ -145,432 +287,432 @@ export default function LoginScreen() {
     };
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                style={{ flex: 1 }}
-            >
-                <ScrollView
-                    contentContainerStyle={{ flexGrow: 1 }}
-                    showsVerticalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
+        <View style={styles.container}>
+            <Image
+                source={{ uri: `file://${BACKGROUND_IMAGE}` }}
+                style={StyleSheet.absoluteFillObject}
+                blurRadius={2}
+            />
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(255, 255, 255, 0.4)' }]} />
+
+            <SafeAreaView style={{ flex: 1 }}>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    style={{ flex: 1 }}
                 >
-                    <View style={[styles.mainContent, { paddingVertical: isExtraSmall ? 6 : (isSmallScreen ? 12 : 40) }]}>
-                        <View>
-                            <TouchableOpacity
-                                onPress={() => router.back()}
-                                onPressIn={() => {
-                                    backButtonScale.value = withSpring(0.8);
-                                }}
-                                onPressOut={() => {
-                                    backButtonScale.value = withSpring(1);
-                                }}
-                                style={[styles.backButton, isExtraSmall && { marginBottom: 4 }]}
-                            >
-                                <Animated.View style={animatedBackStyle}>
-                                    <Ionicons name="chevron-back" size={isExtraSmall ? 20 : 24} color={theme.text} />
-                                </Animated.View>
-                            </TouchableOpacity>
+                    <ScrollView
+                        contentContainerStyle={{ flexGrow: 1 }}
+                        showsVerticalScrollIndicator={false}
+                        keyboardShouldPersistTaps="handled"
+                    >
+                        <View style={styles.mainContent}>
+                            <View style={styles.topSection}>
+                                <TouchableOpacity
+                                    onPress={() => router.back()}
+                                    onPressIn={() => {
+                                        backButtonScale.value = withSpring(0.8);
+                                    }}
+                                    onPressOut={() => {
+                                        backButtonScale.value = withSpring(1);
+                                    }}
+                                    style={styles.backButton}
+                                >
+                                    <Animated.View style={[animatedBackStyle, styles.backButtonInner, { backgroundColor: 'rgba(255, 255, 255, 0.8)' }]}>
+                                        <Ionicons name="chevron-back" size={24} color={theme.tint} />
+                                    </Animated.View>
+                                </TouchableOpacity>
 
-                            <Animated.View
-                                entering={FadeInDown.duration(600).springify()}
-                                style={[styles.header, { marginBottom: verticalGap, alignItems: 'center', marginTop: isExtraSmall ? 6 : 20 }]}
-                            >
-                                <View style={styles.greetingRow}>
-                                    <Text style={[styles.title, { color: theme.tint, fontSize: isExtraSmall ? 26 : 38, textAlign: 'center', fontFamily: Typography.h1 }]}>
-                                        Konnichiwa! <Text style={{ fontFamily: Typography.brand }}>Maki Desu</Text>.
+                                <Animated.View
+                                    entering={FadeInDown.duration(800).springify()}
+                                    style={styles.header}
+                                >
+                                    <Text style={[styles.title, { color: '#2D3436' }]}>
+                                        Konnichiwa!
                                     </Text>
+                                    <Text style={[styles.brandText, { color: theme.tint }]}>
+                                        Maki Desu
+                                    </Text>
+                                    <Text style={[styles.subtitle, { color: '#636E72' }]}>
+                                        Discover your favorite Japanese flavors today.
+                                    </Text>
+                                </Animated.View>
+                            </View>
+
+                            <Animated.View
+                                entering={FadeInUp.delay(200).duration(1000).springify()}
+                                style={[styles.loginCard, { backgroundColor: 'rgba(255, 255, 255, 0.9)' }]}
+                            >
+                                <View style={styles.socialRow}>
+                                    <TouchableOpacity style={styles.socialIconButton}>
+                                        <AntDesign name="google" size={22} color="#DB4437" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.socialIconButton}>
+                                        <FontAwesome name="facebook" size={22} color="#4267B2" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.socialIconButton}>
+                                        <Ionicons name="logo-apple" size={22} color="#000000" />
+                                    </TouchableOpacity>
                                 </View>
-                                <Text style={[styles.subtitle, { color: theme.text, marginTop: 4, paddingHorizontal: 20, fontFamily: Typography.body }, isSmallScreen && { fontSize: 13, lineHeight: 18 }]} numberOfLines={3}>
-                                    What will you eat today?
-                                </Text>
-                            </Animated.View>
-                        </View>
 
-                        <View style={{ flex: 1, justifyContent: 'center', marginBottom: isExtraSmall ? 2 : (isSmallScreen ? 4 : 0) }}>
-                            <Animated.View
-                                entering={FadeInDown.delay(200).duration(600).springify()}
-                                style={[styles.socialContainer, { marginBottom: isExtraSmall ? 8 : (isSmallScreen ? 10 : verticalGap) }]}
-                            >
-                                <ThemedButton
-                                    title=""
-                                    variant="social"
-                                    onPress={() => { }}
-                                    icon={<AntDesign name="google" size={isExtraSmall ? 18 : (isSmallScreen ? 20 : 24)} color="#DB4437" />}
-                                    style={[styles.socialBtn, isExtraSmall ? { width: 36, height: 36 } : (isSmallScreen && { width: 40, height: 40 })]}
-                                />
-                                <ThemedButton
-                                    title=""
-                                    variant="social"
-                                    onPress={() => { }}
-                                    icon={<FontAwesome name="facebook" size={isExtraSmall ? 18 : (isSmallScreen ? 20 : 24)} color="#4267B2" />}
-                                    style={[styles.socialBtn, isExtraSmall ? { width: 36, height: 36 } : (isSmallScreen && { width: 40, height: 40 })]}
-                                />
-                                <ThemedButton
-                                    title=""
-                                    variant="social"
-                                    onPress={() => { }}
-                                    icon={<Ionicons name="logo-apple" size={isExtraSmall ? 18 : (isSmallScreen ? 20 : 24)} color="#000000" />}
-                                    style={[styles.socialBtn, isExtraSmall ? { width: 36, height: 36 } : (isSmallScreen && { width: 40, height: 40 })]}
-                                />
-                            </Animated.View>
+                                <View style={styles.dividerRow}>
+                                    <View style={[styles.dividerLine, { backgroundColor: '#DFE6E9' }]} />
+                                    <Text style={styles.dividerLabel}>Or login with email</Text>
+                                    <View style={[styles.dividerLine, { backgroundColor: '#DFE6E9' }]} />
+                                </View>
 
-                            <Animated.View
-                                entering={FadeInDown.delay(300).duration(600)}
-                                style={[styles.dividerContainer, { marginBottom: isExtraSmall ? 8 : (isSmallScreen ? 10 : verticalGap) }]}
-                            >
-                                <View style={[styles.divider, { backgroundColor: theme.border }]} />
-                                <Text style={[styles.dividerText, { color: theme.text, fontSize: isExtraSmall ? 7 : (isSmallScreen ? 8 : 10) }]}>Or login with email</Text>
-                                <View style={[styles.divider, { backgroundColor: theme.border }]} />
-                            </Animated.View>
+                                <ErrorBanner message={authError} reservedHeight={40} />
 
-                            {/* Error banner: fixed reserved slot below divider, no layout shift */}
-                            <ErrorBanner message={authError} reservedHeight={64} />
+                                <View style={styles.inputContainer}>
+                                    <ThemedInput
+                                        placeholder="Email Address"
+                                        value={email}
+                                        onChangeText={setEmail}
+                                        keyboardType="email-address"
+                                        style={styles.input}
+                                    />
+                                    <ThemedInput
+                                        placeholder="Password"
+                                        value={password}
+                                        onChangeText={setPassword}
+                                        secureTextEntry
+                                        style={styles.input}
+                                    />
+                                </View>
 
-                            <Animated.View
-                                entering={FadeInUp.delay(400).duration(600).springify()}
-                                style={styles.form}
-                            >
-                                <ThemedInput
-                                    label={isSmallScreen ? undefined : "Email"}
-                                    placeholder="Email"
-                                    value={email}
-                                    onChangeText={setEmail}
-                                    keyboardType="email-address"
-                                    height={isExtraSmall ? 38 : (isSmallScreen ? 44 : 56)}
-                                    style={{ marginBottom: isExtraSmall ? 6 : (isSmallScreen ? 8 : 12) }}
-                                />
-                                <ThemedInput
-                                    label={isSmallScreen ? undefined : "Password"}
-                                    placeholder="Password"
-                                    value={password}
-                                    onChangeText={setPassword}
-                                    secureTextEntry
-                                    height={isExtraSmall ? 38 : (isSmallScreen ? 44 : 56)}
-                                    style={{ marginBottom: isExtraSmall ? 6 : (isSmallScreen ? 8 : 12) }}
-                                />
-
-                                <View style={[styles.row, { marginBottom: isExtraSmall ? 8 : (isSmallScreen ? 10 : verticalGap) }]}>
+                                <View style={styles.actionRow}>
                                     <Checkbox
-                                        label="Remember me"
+                                        label="Stay signed in"
                                         checked={rememberMe}
                                         onPress={() => setRememberMe(!rememberMe)}
-                                        style={isExtraSmall ? { transform: [{ scale: 0.8 }] } : (isSmallScreen ? { transform: [{ scale: 0.9 }] } : {})}
                                     />
-                                    <TouchableOpacity
-                                        onPress={() => (router.push as any)('/forgot-password')}
-                                        style={{
-                                            backgroundColor: 'rgba(216, 46, 63, 0.1)',
-                                            paddingVertical: 6,
-                                            paddingHorizontal: 12,
-                                            borderRadius: 16,
-                                        }}
-                                    >
-                                        <Text style={[styles.forgotPassword, { color: theme.tint, fontSize: isExtraSmall ? 11 : (isSmallScreen ? 12 : 14) }]}>Forgot Password?</Text>
+                                    <TouchableOpacity onPress={() => (router.push as any)('/forgot-password')}>
+                                        <Text style={[styles.forgotText, { color: theme.tint }]}>Forgot password?</Text>
                                     </TouchableOpacity>
                                 </View>
 
                                 <ThemedButton
-                                    title="Login"
+                                    title="Sign In"
                                     onPress={handleLogin}
                                     loading={isSubmitting}
                                     disabled={isSubmitting}
-                                    style={[styles.loginButton, isExtraSmall ? { height: 40, borderRadius: 20 } : (isSmallScreen && { height: 44, borderRadius: 22 }), { marginBottom: 16 }]}
+                                    style={styles.signInButton}
                                 />
 
-                                <TouchableOpacity onPress={() => router.replace('/home_dashboard')} style={{ alignItems: 'center', marginBottom: 24 }}>
-                                    <Text style={{ fontFamily: Typography.button, color: theme.text, fontSize: isExtraSmall ? 10 : (isSmallScreen ? 12 : 14), opacity: 0.8 }}>
-                                        Continue as Guest
-                                    </Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity onPress={() => router.push('/signup')} style={[styles.signupLink, isExtraSmall ? { marginTop: 4 } : (isSmallScreen && { marginTop: 8 })]}>
-                                    <Text style={[styles.signupLinkText, { color: theme.text, fontSize: isExtraSmall ? 10 : (isSmallScreen ? 12 : 14) }]}>
-                                        Don&apos;t have an account? <Text style={[styles.signupLinkBold, { color: theme.tint }]}>Sign Up</Text>
-                                    </Text>
-                                </TouchableOpacity>
-                            </Animated.View>
-                        </View>
-
-                        <Animated.View
-                            entering={FadeInUp.delay(600).duration(600)}
-                            style={[styles.footer, isExtraSmall ? { marginTop: 2, paddingBottom: 16 } : (isSmallScreen && { marginTop: 4, paddingBottom: 24 })]}
-                        >
-                            <Text style={[styles.footerText, { color: theme.text, fontSize: isExtraSmall ? 8 : (isSmallScreen ? 10 : 12), lineHeight: isExtraSmall ? 10 : (isSmallScreen ? 14 : 18) }]}>
-                                By continuing, you agree to MakiDesu&apos;s{"\n"}
-                                <Text
-                                    style={[styles.link, { color: theme.tint }]}
-                                    onPress={() => { setModalType('terms'); setShowTermsModal(true); }}
-                                >
-                                    Term of Service
-                                </Text> and <Text
-                                    style={[styles.link, { color: theme.tint }]}
-                                    onPress={() => { setModalType('privacy'); setShowTermsModal(true); }}
-                                >
-                                    Privacy Policy
-                                </Text>
-                            </Text>
-                        </Animated.View>
-                    </View>
-
-                    <Modal
-                        animationType="slide"
-                        transparent={true}
-                        visible={showTermsModal}
-                        onRequestClose={() => setShowTermsModal(false)}
-                    >
-                        <View style={styles.modalOverlay}>
-                            <View style={[styles.modalContent, { backgroundColor: theme.background }]}>
-                                <View style={styles.modalHeader}>
-                                    <Text style={[styles.modalTitle, { color: theme.tint }]}>
-                                        {modalType === 'terms' ? 'Term of Service' : 'Privacy Policy'}
-                                    </Text>
-                                    <TouchableOpacity onPress={() => setShowTermsModal(false)}>
-                                        <Ionicons name="close" size={24} color={theme.text} />
+                                <View style={styles.signUpPrompt}>
+                                    <Text style={styles.signUpText}>New here? </Text>
+                                    <TouchableOpacity onPress={() => router.push('/signup')} activeOpacity={0.7}>
+                                        <Text style={[styles.signUpLink, { color: theme.tint }]}>Create an account</Text>
                                     </TouchableOpacity>
                                 </View>
-                                <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                                    {modalType === 'terms' ? (
-                                        <Text style={[styles.termsBodyText, { color: theme.text }]}>
-                                            {`
-Welcome to MakiDesu!
 
-1. Premium Experience: Our app provides a premium Japanese dining experience at your fingertips. By using this app, you agree to our service standards.
+                                <TouchableOpacity 
+                                    onPress={() => router.replace('/home_dashboard')} 
+                                    style={styles.guestLink}
+                                >
+                                    <Text style={styles.guestText}>Continue as Guest</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
 
-2. Freshness Guarantee: All orders are prepared fresh upon confirmation. We follow the principle of "Omotenashi" (Japanese hospitality), ensuring the highest quality in every dish.
-
-3. Order Responsibility: Please ensure your contact and delivery details are correct. Cancellations are only accepted within 2 minutes of order placement.
-
-4. Account Security: You are responsible for maintaining the confidentiality of your account credentials.
-
-5. Termination: We reserve the right to suspend accounts that violate our community standards or engage in fraudulent activities.`}
-                                        </Text>
-                                    ) : (
-                                        <Text style={[styles.termsBodyText, { color: theme.text }]}>
-                                            {`
-MakiDesu Privacy Commitment
-
-1. Data Collection: We collect your name, email, and optionally your birthday to provide a personalized dining experience.
-
-2. Purpose of Use: Your data is used for account verification, secure transactions, order updates, and sending exclusive anniversary gifts if applicable.
-
-3. Secure Storage: We utilize industry-standard encryption to protect your personal information from unauthorized access.
-
-4. Third-Party Sharing: We do NOT sell your data. Information is only shared with trusted delivery partners to fulfill your orders.
-
-5. Your Rights: You can update your profile or request account deletion at any time through the app settings.
-
-6. Cookies & Tracking: We use minimal tracking to improve app performance and understand your dining preferences for better recommendations.`}
-                                        </Text>
-                                    )}
-                                </ScrollView>
-                                <ThemedButton
-                                    title="Close"
-                                    onPress={() => setShowTermsModal(false)}
-                                    style={styles.modalCloseButton}
-                                />
-                            </View>
-                        </View>
-                    </Modal>
-
-                    {/* Success Animation Modal */}
-                    <Modal
-                        transparent
-                        visible={showSuccessModal}
-                        animationType="none"
-                    >
-                        <View style={styles.successOverlay}>
-                            {/* Expanding Orange Background */}
-                            <Animated.View style={[
-                                StyleSheet.absoluteFillObject,
-                                {
-                                    backgroundColor: '#F97316', // Bright Orange as requested
-                                    borderRadius: 9999,
-                                    width: 50,
-                                    height: 50,
-                                    left: '50%',
-                                    top: '50%',
-                                    marginLeft: -25,
-                                    marginTop: -25,
-                                    transform: [{ scale: successScale }]
-                                }
-                            ]} />
-
-                            {/* Centered Checkmark */}
-                            <Animated.View style={[{ alignItems: 'center', justifyContent: 'center', zIndex: 10 }, { transform: [{ scale: checkmarkScale }] }]}>
-                                <Ionicons name="checkmark-circle" size={100} color="#FFFFFF" />
-                                <Text style={[styles.successTitle, { color: '#FFFFFF' }]}>Welcome Back!</Text>
-                                <Text style={[styles.successSubtitle, { color: '#FFFFFF', opacity: 0.9 }]}>Preparing your kitchen...</Text>
+                            <Animated.View
+                                entering={FadeInUp.delay(400).duration(800)}
+                                style={styles.footerSection}
+                            >
+                                <Text style={styles.legalText}>
+                                    By signing in, you agree to our{"\n"}
+                                    <Text style={styles.legalLink} onPress={() => { setModalType('terms'); setShowTermsModal(true); }}>Terms</Text> & <Text style={styles.legalLink} onPress={() => { setModalType('privacy'); setShowTermsModal(true); }}>Privacy Policy</Text>
+                                </Text>
                             </Animated.View>
                         </View>
-                    </Modal>
-                </ScrollView>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+
+                        {/* Modals remain similar but styled for the new look */}
+                        <Modal
+                            animationType="slide"
+                            transparent={true}
+                            visible={showTermsModal}
+                            onRequestClose={() => setShowTermsModal(false)}
+                        >
+                            <View style={styles.modalOverlay}>
+                                <View style={[styles.modalContent, { backgroundColor: '#FFF' }]}>
+                                    <View style={styles.modalHeader}>
+                                        <Text style={[styles.modalTitle, { color: theme.tint }]}>
+                                            {modalType === 'terms' ? 'Terms of Service' : 'Privacy Policy'}
+                                        </Text>
+                                        <TouchableOpacity onPress={() => setShowTermsModal(false)}>
+                                            <Ionicons name="close" size={24} color="#2D3436" />
+                                        </TouchableOpacity>
+                                    </View>
+                                    <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                                        <Text style={styles.modalBodyText}>
+                                            {modalType === 'terms' ? `
+1. Welcome: Our app provides a premium Japanese dining experience.
+2. Quality: All dishes are prepared fresh upon order.
+3. Responsibility: Ensure your delivery details are accurate.
+4. Privacy: We value your data security above all else.
+                                            ` : `
+1. Data: we collect minimal data to improve your experience.
+2. Purpose: For order fulfillment and personalization.
+3. Protection: Industry-standard security protocols applied.
+4. Sharing: We never sell your data to third parties.
+                                            `}
+                                        </Text>
+                                    </ScrollView>
+                                    <ThemedButton
+                                        title="Close"
+                                        onPress={() => setShowTermsModal(false)}
+                                        style={styles.modalCloseButton}
+                                    />
+                                </View>
+                            </View>
+                        </Modal>
+
+                        <Modal
+                            transparent
+                            visible={showSuccessModal}
+                            animationType="none"
+                        >
+                            <View style={styles.successOverlay}>
+                                <Animated.View style={[
+                                    styles.successCircle,
+                                    {
+                                        backgroundColor: theme.tint,
+                                        transform: [{ scale: successScale }]
+                                    }
+                                ]} />
+                                <Animated.View style={[{ zIndex: 10, alignItems: 'center' }, { transform: [{ scale: checkmarkScale }] }]}>
+                                    <Ionicons name="checkmark-circle" size={100} color="#FFF" />
+                                    <Text style={styles.successTitle}>Welcome Back!</Text>
+                                    <Text style={styles.successSubtitle}>Preparing your kitchen...</Text>
+                                </Animated.View>
+                            </View>
+                        </Modal>
+                    </ScrollView>
+                </KeyboardAvoidingView>
+            </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: '#F7F1E3',
     },
     mainContent: {
         flex: 1,
-        paddingHorizontal: 24,
-        justifyContent: 'space-between',
+        paddingHorizontal: 28,
+        paddingBottom: 40,
+    },
+    topSection: {
+        marginTop: 20,
+        marginBottom: 30,
     },
     backButton: {
-        marginBottom: 10,
+        alignSelf: 'flex-start',
+        marginBottom: 24,
+    },
+    backButtonInner: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
     },
     header: {
-        alignItems: 'center',
-    },
-    greetingRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
+        alignItems: 'flex-start',
     },
     title: {
-        fontSize: 32,
+        fontSize: 34,
         fontFamily: Typography.h1,
-        marginBottom: 8,
+        lineHeight: 40,
+    },
+    brandText: {
+        fontSize: 40,
+        fontFamily: Typography.brand,
+        marginTop: -4,
     },
     subtitle: {
         fontSize: 16,
-        textAlign: 'center',
         fontFamily: Typography.body,
-        lineHeight: 22,
+        marginTop: 10,
+        lineHeight: 24,
+        opacity: 0.8,
     },
-    socialContainer: {
+    loginCard: {
+        borderRadius: 32,
+        padding: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+        elevation: 10,
+    },
+    socialRow: {
         flexDirection: 'row',
         justifyContent: 'center',
-        gap: 15,
+        gap: 20,
+        marginBottom: 24,
     },
-    socialBtn: {
-        width: 50,
-        height: 50,
+    socialIconButton: {
+        width: 54,
+        height: 54,
+        borderRadius: 16,
+        backgroundColor: '#FFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
+        elevation: 2,
     },
-    dividerContainer: {
+    dividerRow: {
         flexDirection: 'row',
         alignItems: 'center',
+        marginBottom: 20,
     },
-    divider: {
+    dividerLine: {
         flex: 1,
         height: 1,
     },
-    dividerText: {
-        marginHorizontal: 16,
+    dividerLabel: {
+        marginHorizontal: 12,
+        fontSize: 12,
         fontFamily: Typography.body,
-        fontSize: 10,
+        color: '#B2BEC3',
         textTransform: 'uppercase',
         letterSpacing: 1,
     },
-    form: {
-        width: '100%',
+    inputContainer: {
+        gap: 12,
+        marginBottom: 16,
     },
-    row: {
+    input: {
+        backgroundColor: '#F9FAFB',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#F1F2F6',
+    },
+    actionRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
+        marginBottom: 24,
     },
-    forgotPassword: {
+    forgotText: {
         fontFamily: Typography.button,
         fontSize: 14,
     },
-    loginButton: {
-        height: 56,
-        borderRadius: 28,
+    signInButton: {
+        height: 58,
+        borderRadius: 18,
         shadowColor: '#D82E3F',
-        shadowOffset: { width: 0, height: 4 },
+        shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 4,
-        backgroundColor: '#D82E3F',
+        shadowRadius: 12,
+        elevation: 5,
+        marginBottom: 20,
     },
-    signupLink: {
-        marginTop: 16,
+    signUpPrompt: {
+        flexDirection: 'row',
+        justifyContent: 'center',
         alignItems: 'center',
+        marginBottom: 16,
     },
-    signupLinkText: {
+    signUpText: {
         fontFamily: Typography.body,
         fontSize: 14,
+        color: '#636E72',
     },
-    signupLinkBold: {
+    signUpLink: {
         fontFamily: Typography.button,
+        fontWeight: '700',
     },
-    footer: {
+    guestLink: {
         alignItems: 'center',
-        marginTop: 10,
     },
-    footerText: {
+    guestText: {
+        fontFamily: Typography.button,
+        fontSize: 13,
+        color: '#B2BEC3',
+        textDecorationLine: 'underline',
+    },
+    footerSection: {
+        marginTop: 30,
+        alignItems: 'center',
+    },
+    legalText: {
         textAlign: 'center',
         fontSize: 12,
+        fontFamily: Typography.body,
+        color: '#B2BEC3',
         lineHeight: 18,
-        opacity: 0.7,
     },
-    link: {
-        fontFamily: Typography.button,
+    legalLink: {
+        fontWeight: '600',
+        textDecorationLine: 'underline',
     },
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 24,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'flex-end',
     },
     modalContent: {
-        width: '100%',
-        maxHeight: '80%',
-        borderRadius: 20,
-        padding: 24,
-        elevation: 5,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
+        borderTopLeftRadius: 40,
+        borderTopRightRadius: 40,
+        padding: 32,
+        maxHeight: '85%',
     },
     modalHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 16,
+        marginBottom: 24,
     },
     modalTitle: {
-        fontSize: 20,
+        fontSize: 24,
         fontFamily: Typography.h1,
     },
     modalBody: {
-        marginBottom: 20,
+        marginBottom: 30,
     },
-    termsBodyText: {
-        fontSize: 14,
+    modalBodyText: {
+        fontSize: 15,
         fontFamily: Typography.body,
-        lineHeight: 20,
+        lineHeight: 24,
+        color: '#636E72',
     },
     modalCloseButton: {
-        height: 48,
-        borderRadius: 24,
+        height: 54,
+        borderRadius: 16,
     },
     successOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(255,255,255,0.95)',
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.9)',
     },
     successCircle: {
-        alignItems: 'center',
-        justifyContent: 'center',
+        position: 'absolute',
+        width: 100,
+        height: 100,
+        borderRadius: 50,
     },
     successTitle: {
-        fontSize: 28,
+        fontSize: 32,
         fontFamily: Typography.h1,
-        color: '#333',
+        color: '#FFF',
         marginTop: 20,
     },
     successSubtitle: {
-        fontSize: 16,
+        fontSize: 18,
         fontFamily: Typography.body,
-        color: '#666',
+        color: '#FFF',
+        opacity: 0.9,
         marginTop: 8,
     },
 });

@@ -1,15 +1,23 @@
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useMemo } from 'react';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+    ActivityIndicator,
+    FlatList,
     Modal,
     Platform,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
+    KeyboardAvoidingView,
+    TouchableWithoutFeedback,
+    Keyboard
 } from 'react-native';
-import { MapView, Marker } from '../components/MapComponent';
-import { useUiStore, setActiveAddress } from '../lib/ui_store';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatAddressForDisplay, useUiStore, setActiveAddress, setAddressFromPlace } from '../lib/ui_store';
+import { searchPlaces, getPlaceDetails } from '../lib/google_location';
+import * as Haptics from 'expo-haptics';
 
 type DeliveryDetailsModalProps = {
     visible: boolean;
@@ -22,30 +30,92 @@ export default function DeliveryDetailsModal({
     onClose,
     onAddAddress,
 }: DeliveryDetailsModalProps) {
+    const insets = useSafeAreaInsets();
     const { addresses, activeAddressId } = useUiStore();
-
-    // Only the active address
+    const [searchQuery, setSearchQuery] = useState('');
+    const [predictions, setPredictions] = useState<any[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    
     const activeAddress = useMemo(
         () => addresses?.find(a => a.id === activeAddressId) ?? null,
         [addresses, activeAddressId]
     );
 
-    const activeCoord = useMemo(() => {
-        if (activeAddress?.latitude && activeAddress?.longitude) {
-            return { latitude: activeAddress.latitude, longitude: activeAddress.longitude };
+    // Debounced search
+    useEffect(() => {
+        if (searchQuery.length < 3) {
+            setPredictions([]);
+            return;
         }
-        return null;
-    }, [activeAddress]);
 
-    const activeRegion = useMemo(() => {
-        if (!activeCoord) return undefined;
-        return {
-            latitude: activeCoord.latitude,
-            longitude: activeCoord.longitude,
-            latitudeDelta: 0.0012,
-            longitudeDelta: 0.0012,
-        };
-    }, [activeCoord]);
+        const timer = setTimeout(async () => {
+            setIsSearching(true);
+            const results = await searchPlaces(searchQuery, process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '');
+            setPredictions(results);
+            setIsSearching(false);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
+
+    const handleSelectAddress = useCallback((id: string) => {
+        setActiveAddress(id);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onClose();
+    }, [onClose]);
+
+    const handleSelectPrediction = useCallback(async (prediction: any) => {
+        setIsSearching(true);
+        const details = await getPlaceDetails(prediction.place_id, process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '');
+        if (details) {
+            const id = await setAddressFromPlace(details);
+            if (id) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                onClose();
+            }
+        }
+        setIsSearching(false);
+    }, [onClose]);
+
+    const renderAddressItem = ({ item }: { item: any }) => {
+        const isActive = item.id === activeAddressId;
+        return (
+            <TouchableOpacity
+                style={[styles.addressItem, isActive && styles.addressItemActive]}
+                onPress={() => handleSelectAddress(item.id)}
+            >
+                <View style={[styles.iconBox, isActive && styles.iconBoxActive]}>
+                    <Feather 
+                        name={item.notes?.toLowerCase().includes('home') ? 'home' : item.notes?.toLowerCase().includes('work') ? 'briefcase' : 'map-pin'} 
+                        size={18} 
+                        color={isActive ? '#FFF' : '#D94F3D'} 
+                    />
+                </View>
+                <View style={styles.addressInfo}>
+                    <Text style={styles.addressTitle} numberOfLines={1}>
+                        {item.street || 'Saved Location'}
+                    </Text>
+                    <Text style={styles.addressSubtitle} numberOfLines={1}>
+                        {item.fullAddress}
+                    </Text>
+                </View>
+                {isActive && <Ionicons name="checkmark-circle" size={20} color="#D94F3D" />}
+            </TouchableOpacity>
+        );
+    };
+
+    const renderPredictionItem = ({ item }: { item: any }) => (
+        <TouchableOpacity
+            style={styles.predictionItem}
+            onPress={() => handleSelectPrediction(item)}
+        >
+            <Ionicons name="location-outline" size={20} color="#8A8A8A" style={{ marginRight: 12 }} />
+            <View style={{ flex: 1 }}>
+                <Text style={styles.predictionTitle} numberOfLines={1}>{item.structured_formatting.main_text}</Text>
+                <Text style={styles.predictionSubtitle} numberOfLines={1}>{item.structured_formatting.secondary_text}</Text>
+            </View>
+        </TouchableOpacity>
+    );
 
     return (
         <Modal
@@ -54,133 +124,101 @@ export default function DeliveryDetailsModal({
             transparent={true}
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
-                <View style={styles.content}>
-                    {/* Header */}
-                    <View style={styles.header}>
-                        <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                            <Feather name="x" size={24} color="#2C2C2C" />
-                        </TouchableOpacity>
-                        <Text style={styles.headerTitle}>Delivery Details</Text>
-                        <View style={{ width: 40 }} />
-                    </View>
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                <View style={styles.overlay}>
+                    <KeyboardAvoidingView 
+                        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                        style={styles.content}
+                    >
+                        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
+                            {/* Handle */}
+                            <View style={styles.handle} />
+                            
+                            {/* Header */}
+                            <View style={styles.header}>
+                                <Text style={styles.headerTitle}>Delivery Address</Text>
+                                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                                    <Ionicons name="close" size={24} color="#2C2C2C" />
+                                </TouchableOpacity>
+                            </View>
 
-                    {/* Delivery Tab */}
-                    <View style={styles.tabContainer}>
-                        <View style={styles.activeTab}>
-                            <MaterialCommunityIcons name="bike-fast" size={20} color="#D94F3D" />
-                            <Text style={styles.activeTabText}>Delivery</Text>
-                        </View>
-                    </View>
+                            {/* Search Bar */}
+                            <View style={styles.searchContainer}>
+                                <Ionicons name="search" size={20} color="#8A8A8A" style={{ marginLeft: 12 }} />
+                                <TextInput
+                                    placeholder="Search for a new address..."
+                                    style={styles.searchInput}
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                    placeholderTextColor="#8A8A8A"
+                                />
+                                {isSearching && <ActivityIndicator size="small" color="#D94F3D" style={{ marginRight: 12 }} />}
+                                {searchQuery.length > 0 && !isSearching && (
+                                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                        <Ionicons name="close-circle" size={20} color="#CCC" style={{ marginRight: 12 }} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
 
-                    {/* Main Content */}
-                    <View style={styles.mainContent}>
-                        {activeAddress && activeCoord && activeRegion ? (
-                            <>
-                                {/* Full Map showing exact pin */}
-                                <View style={styles.mapCard}>
-                                    <MapView
-                                        style={styles.map}
-                                        region={activeRegion}
-                                        scrollEnabled={false}
-                                        zoomEnabled={false}
-                                        rotateEnabled={false}
-                                        pitchEnabled={false}
-                                        showsUserLocation={false}
-                                        showsMyLocationButton={false}
-                                        showsCompass={false}
-                                        showsTraffic={false}
-                                        showsBuildings={true}
-                                        showsScale={false}
-                                        toolbarEnabled={false}
-                                    >
-                                        <Marker
-                                            coordinate={activeCoord}
-                                            anchor={{ x: 0.5, y: 1 }}
+                            <View style={styles.body}>
+                                {searchQuery.length >= 3 ? (
+                                    <FlatList
+                                        data={predictions}
+                                        keyExtractor={(item) => item.place_id}
+                                        renderItem={renderPredictionItem}
+                                        ListEmptyComponent={
+                                            !isSearching ? (
+                                                <Text style={styles.emptyText}>No addresses found</Text>
+                                            ) : null
+                                        }
+                                    />
+                                ) : (
+                                    <>
+                                        <TouchableOpacity 
+                                            style={styles.currentLocationBtn}
+                                            onPress={() => {
+                                                // Trigger GPS detection
+                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                onClose();
+                                                // Note: HomeDashboard will handle GPS detection if no active address
+                                            }}
                                         >
-                                            <View style={styles.pinWrapper}>
-                                                <View style={styles.pinPulse} />
-                                                <View style={styles.pinHead}>
-                                                    <View style={styles.pinHeadInner} />
+                                            <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#D94F3D" />
+                                            <Text style={styles.currentLocationText}>Use Current Location</Text>
+                                        </TouchableOpacity>
+
+                                        <Text style={styles.sectionTitle}>Saved Addresses</Text>
+                                        <FlatList
+                                            data={addresses}
+                                            keyExtractor={(item) => item.id}
+                                            renderItem={renderAddressItem}
+                                            contentContainerStyle={{ paddingBottom: 20 }}
+                                            ListEmptyComponent={
+                                                <View style={styles.emptyContainer}>
+                                                    <Text style={styles.emptyText}>No saved addresses yet</Text>
+                                                    <TouchableOpacity style={styles.addFirstBtn} onPress={onAddAddress}>
+                                                        <Text style={styles.addFirstBtnText}>Add your first address</Text>
+                                                    </TouchableOpacity>
                                                 </View>
-                                                <View style={styles.pinTail} />
-                                                <View style={styles.pinShadow} />
-                                            </View>
-                                        </Marker>
-                                    </MapView>
-
-                                    {/* Active address label over map */}
-                                    <View style={styles.mapOverlayTop}>
-                                        <View style={styles.activePill}>
-                                            <View style={styles.activeDot} />
-                                            <Text style={styles.activePillText}>Active Delivery Location</Text>
-                                        </View>
-                                    </View>
-                                </View>
-
-                                {/* Active address info card */}
-                                <View style={styles.addressCard}>
-                                    <View style={styles.addressIconCircle}>
-                                        <Feather name="map-pin" size={18} color="#FFFFFF" />
-                                    </View>
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={styles.addressName} numberOfLines={1}>
-                                            {activeAddress.street || activeAddress.subdivision || activeAddress.fullAddress.split(',')[0] || 'Unnamed Location'}
-                                        </Text>
-                                        <Text style={styles.addressFull} numberOfLines={2}>
-                                            {activeAddress.fullAddress}
-                                        </Text>
-                                    </View>
-                                </View>
-
-                                {/* Manage button */}
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.manageButton}
-                                    onPress={onAddAddress}
-                                >
-                                    <Feather name="edit-2" size={15} color="#D94F3D" style={{ marginRight: 6 }} />
-                                    <Text style={styles.manageButtonText}>Manage or Add New Address</Text>
-                                </TouchableOpacity>
-                            </>
-                        ) : addresses && addresses.length > 0 ? (
-                            // Has addresses but none active — prompt to pick one
-                            <View style={styles.noActiveContainer}>
-                                <View style={styles.iconCircle}>
-                                    <Feather name="map-pin" size={36} color="#D94F3D" />
-                                </View>
-                                <Text style={styles.mainTitle}>No Active Address</Text>
-                                <Text style={styles.subtitle}>Select an address to use for delivery.</Text>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.addButton}
-                                    onPress={onAddAddress}
-                                >
-                                    <Text style={styles.addButtonText}>Manage Addresses</Text>
-                                </TouchableOpacity>
+                                            }
+                                        />
+                                        
+                                        {addresses.length > 0 && (
+                                            <TouchableOpacity 
+                                                style={styles.manageBtn}
+                                                onPress={onAddAddress}
+                                            >
+                                                <Feather name="plus" size={18} color="#D94F3D" />
+                                                <Text style={styles.manageBtnText}>Add New Address</Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </>
+                                )}
                             </View>
-                        ) : (
-                            // No addresses at all
-                            <View style={styles.noActiveContainer}>
-                                <View style={styles.iconCircle}>
-                                    <Feather name="map-pin" size={36} color="#D1D1D1" />
-                                </View>
-                                <Text style={styles.mainTitle}>Where should we deliver?</Text>
-                                <Text style={styles.subtitle}>
-                                    Add a delivery address to get started.
-                                </Text>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.addButton}
-                                    onPress={onAddAddress}
-                                >
-                                    <Text style={styles.addButtonText}>Add Delivery Address</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
-                    </View>
+                        </View>
+                    </KeyboardAvoidingView>
                 </View>
-            </View>
+            </TouchableWithoutFeedback>
         </Modal>
     );
 }
@@ -188,256 +226,181 @@ export default function DeliveryDetailsModal({
 const styles = StyleSheet.create({
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.55)',
+        backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'flex-end',
     },
     content: {
-        backgroundColor: '#F5F1E8',
-        borderTopLeftRadius: 28,
-        borderTopRightRadius: 28,
-        height: '75%',
-        paddingBottom: Platform.OS === 'ios' ? 36 : 20,
+        width: '100%',
+    },
+    sheet: {
+        backgroundColor: '#FFF',
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        minHeight: '60%',
+        maxHeight: '90%',
+    },
+    handle: {
+        width: 40,
+        height: 5,
+        backgroundColor: '#E0E0E0',
+        borderRadius: 2.5,
+        alignSelf: 'center',
+        marginTop: 12,
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 16,
+        paddingHorizontal: 24,
         paddingVertical: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#EFEAE0',
-    },
-    closeButton: {
-        width: 40,
-        height: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
     },
     headerTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#2C2C2C',
-        textAlign: 'center',
-    },
-    tabContainer: {
-        paddingHorizontal: 20,
-        marginTop: 14,
-        marginBottom: 14,
-    },
-    activeTab: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 11,
-        paddingHorizontal: 24,
-        backgroundColor: '#FAF1F0',
-        borderRadius: 10,
-        borderWidth: 1.5,
-        borderColor: '#D94F3D',
-        gap: 8,
-    },
-    activeTabText: {
-        color: '#D94F3D',
-        fontSize: 16,
-        fontWeight: '700',
-    },
-    mainContent: {
-        flex: 1,
-        paddingHorizontal: 16,
-    },
-    // ---- Full Map ----
-    mapCard: {
-        width: '100%',
-        flex: 1,
-        borderRadius: 18,
-        overflow: 'hidden',
-        borderWidth: 2,
-        borderColor: '#D94F3D',
-        marginBottom: 12,
-    },
-    map: {
-        width: '100%',
-        height: '100%',
-    },
-    mapOverlayTop: {
-        position: 'absolute',
-        top: 10,
-        left: 10,
-        right: 10,
-        alignItems: 'flex-start',
-    },
-    activePill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.95)',
-        borderRadius: 20,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        gap: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 4,
-        elevation: 3,
-    },
-    activeDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#D94F3D',
-    },
-    activePillText: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#D94F3D',
-    },
-    // ---- Custom Pin ----
-    pinWrapper: {
-        alignItems: 'center',
-    },
-    pinPulse: {
-        position: 'absolute',
-        top: -8,
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: 'rgba(217, 79, 61, 0.2)',
-        borderWidth: 1,
-        borderColor: 'rgba(217, 79, 61, 0.4)',
-    },
-    pinHead: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: '#D94F3D',
-        borderWidth: 3,
-        borderColor: '#FFFFFF',
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowColor: '#D94F3D',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.6,
-        shadowRadius: 5,
-        elevation: 10,
-        zIndex: 1,
-    },
-    pinHeadInner: {
-        width: 11,
-        height: 11,
-        borderRadius: 5.5,
-        backgroundColor: '#FFFFFF',
-    },
-    pinTail: {
-        width: 4,
-        height: 14,
-        backgroundColor: '#D94F3D',
-        borderBottomLeftRadius: 4,
-        borderBottomRightRadius: 4,
-        marginTop: -2,
-        zIndex: 1,
-    },
-    pinShadow: {
-        width: 12,
-        height: 5,
-        borderRadius: 6,
-        backgroundColor: 'rgba(0,0,0,0.2)',
-        marginTop: 1,
-    },
-    // ---- Address Card ----
-    addressCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        padding: 14,
-        marginBottom: 10,
-        borderWidth: 1.5,
-        borderColor: '#D94F3D',
-        gap: 12,
-    },
-    addressIconCircle: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
-        backgroundColor: '#D94F3D',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    addressName: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#D94F3D',
-        marginBottom: 2,
-    },
-    addressFull: {
-        fontSize: 12,
-        color: '#6B7280',
-        lineHeight: 17,
-    },
-    // ---- Buttons ----
-    manageButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'transparent',
-        width: '100%',
-        paddingVertical: 13,
-        borderRadius: 30,
-        borderWidth: 1.5,
-        borderColor: '#D94F3D',
-    },
-    manageButtonText: {
-        color: '#D94F3D',
-        fontSize: 14,
-        fontWeight: '700',
-    },
-    // ---- Empty States ----
-    noActiveContainer: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 20,
-    },
-    iconCircle: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
-        backgroundColor: '#EFEAE0',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: '#E8E2D2',
-    },
-    mainTitle: {
         fontSize: 20,
         fontWeight: '800',
         color: '#2C2C2C',
-        textAlign: 'center',
-        marginBottom: 10,
+        fontFamily: 'Outfit_800ExtraBold',
     },
-    subtitle: {
-        fontSize: 14,
-        color: '#8A8A8A',
-        textAlign: 'center',
-        lineHeight: 20,
-        marginBottom: 28,
+    closeButton: {
+        padding: 4,
     },
-    addButton: {
-        backgroundColor: '#D94F3D',
-        width: '100%',
-        paddingVertical: 15,
-        borderRadius: 30,
+    searchContainer: {
+        flexDirection: 'row',
         alignItems: 'center',
-        shadowColor: '#D94F3D',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 4,
+        backgroundColor: '#F5F5F5',
+        marginHorizontal: 24,
+        borderRadius: 16,
+        height: 52,
+        marginBottom: 16,
     },
-    addButtonText: {
-        color: '#FFFFFF',
+    searchInput: {
+        flex: 1,
+        paddingHorizontal: 12,
+        fontSize: 16,
+        color: '#2C2C2C',
+        fontFamily: 'Outfit_500Medium',
+    },
+    body: {
+        flex: 1,
+        paddingHorizontal: 24,
+    },
+    currentLocationBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+        marginBottom: 16,
+    },
+    currentLocationText: {
+        marginLeft: 12,
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#D94F3D',
+        fontFamily: 'Outfit_600SemiBold',
+    },
+    sectionTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#8A8A8A',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+        marginBottom: 12,
+        marginTop: 8,
+        fontFamily: 'Outfit_700Bold',
+    },
+    addressItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5',
+    },
+    addressItemActive: {
+        // Option highlight
+    },
+    iconBox: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FDECEB',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    iconBoxActive: {
+        backgroundColor: '#D94F3D',
+    },
+    addressInfo: {
+        flex: 1,
+    },
+    addressTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#2C2C2C',
+        fontFamily: 'Outfit_700Bold',
+    },
+    addressSubtitle: {
+        fontSize: 13,
+        color: '#8A8A8A',
+        marginTop: 2,
+        fontFamily: 'Outfit_400Regular',
+    },
+    predictionItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5',
+    },
+    predictionTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#2C2C2C',
+        fontFamily: 'Outfit_600SemiBold',
+    },
+    predictionSubtitle: {
+        fontSize: 13,
+        color: '#8A8A8A',
+        marginTop: 2,
+        fontFamily: 'Outfit_400Regular',
+    },
+    manageBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        marginTop: 8,
+        borderWidth: 1.5,
+        borderColor: '#D94F3D',
+        borderRadius: 16,
+        borderStyle: 'dashed',
+    },
+    manageBtnText: {
+        marginLeft: 8,
         fontSize: 15,
         fontWeight: '700',
+        color: '#D94F3D',
+        fontFamily: 'Outfit_700Bold',
     },
+    emptyContainer: {
+        alignItems: 'center',
+        paddingVertical: 40,
+    },
+    emptyText: {
+        fontSize: 15,
+        color: '#8A8A8A',
+        textAlign: 'center',
+        fontFamily: 'Outfit_400Regular',
+    },
+    addFirstBtn: {
+        marginTop: 16,
+        backgroundColor: '#D94F3D',
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 30,
+    },
+    addFirstBtnText: {
+        color: '#FFF',
+        fontWeight: '700',
+        fontSize: 15,
+        fontFamily: 'Outfit_700Bold',
+    }
 });

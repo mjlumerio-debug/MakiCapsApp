@@ -19,8 +19,8 @@ import {
     StatusBar as RNStatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useUiStore, clearOrders, addOrder, setOrders, type Order, type OrderItem } from '../lib/ui_store';
-import { fetchMyOrders, type OrderStatusResponse } from '../lib/order_api';
+import { useUiStore, setOrders, type Order, type OrderItem } from '../lib/ui_store';
+import { fetchMyOrders } from '../lib/order_api';
 
 const { width } = Dimensions.get('window');
 const PRIMARY_ORANGE = '#FF5800'; // Vibrant Orange theme
@@ -123,7 +123,7 @@ const ActiveOrderCard = ({ order, theme, openReceipt, onTrack }: any) => (
 
         <View style={styles.cardDetailsRow}>
             <Text style={styles.itemCountText}>{order.items} items</Text>
-            <Text style={styles.priceValueText}>{order.totalPrice || order.price}</Text>
+            <Text style={styles.priceValueText}>{displayMoney(order.totalPrice || order.price)}</Text>
         </View>
 
         <View style={styles.deliveryInfoRow}>
@@ -174,7 +174,7 @@ const RecentOrderCard = ({ order, theme, openReceipt }: any) => (
 
         <View style={styles.cardDetailsRow}>
             <Text style={styles.itemCountText}>{order.items} items</Text>
-            <Text style={styles.priceValueText}>{order.totalPrice}</Text>
+            <Text style={styles.priceValueText}>{displayMoney(order.totalPrice)}</Text>
         </View>
 
         <View style={styles.deliveryInfoRow}>
@@ -248,13 +248,17 @@ const ReceiptModal = ({ visible, onClose, order }: any) => {
                         {/* Items List (Tighter) */}
                         <View style={styles.receiptSection}>
                             <Text style={styles.receiptSectionTitle}>Order Details</Text>
-                            {order.itemsList?.map((item: any, index: number) => (
-                                <View key={index} style={styles.receiptItemRow}>
-                                    <Text style={styles.receiptItemQty}>{item.quantity}x</Text>
-                                    <Text style={styles.receiptItemName}>{item.title}</Text>
-                                    <Text style={styles.receiptItemPrice}>{item.price}</Text>
-                                </View>
-                            ))}
+                            {order.itemsList?.length ? (
+                                order.itemsList.map((item: any, index: number) => (
+                                    <View key={index} style={styles.receiptItemRow}>
+                                        <Text style={styles.receiptItemQty}>{item.quantity}x</Text>
+                                        <Text style={styles.receiptItemName}>{item.title}</Text>
+                                    <Text style={styles.receiptItemPrice}>{displayMoney(item.price)}</Text>
+                                    </View>
+                                ))
+                            ) : (
+                                <Text style={styles.summaryLabel}>No item details available for this order yet.</Text>
+                            )}
                         </View>
 
                         {/* Dash Separator */}
@@ -264,15 +268,15 @@ const ReceiptModal = ({ visible, onClose, order }: any) => {
                         <View style={styles.receiptSection}>
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Subtotal</Text>
-                                <Text style={styles.summaryValue}>{order.subtotal}</Text>
+                                <Text style={styles.summaryValue}>{displayMoney(order.subtotal)}</Text>
                             </View>
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Delivery Fee</Text>
-                                <Text style={styles.summaryValue}>{order.deliveryFee}</Text>
+                                <Text style={styles.summaryValue}>{displayMoney(order.deliveryFee)}</Text>
                             </View>
                             <View style={[styles.summaryRow, { marginTop: 6 }]}>
                                 <Text style={styles.grandTotalLabel}>Total Amount</Text>
-                                <Text style={styles.grandTotalValue}>{order.totalPrice}</Text>
+                                <Text style={styles.grandTotalValue}>{displayMoney(order.totalPrice)}</Text>
                             </View>
                         </View>
 
@@ -335,6 +339,7 @@ const DUMMY_ORDER_DATA = {
     image: require('../assets/images/sushi-hero.png'),
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const DUMMY_RECENT: any[] = [
     {
         ...DUMMY_ORDER_DATA,
@@ -378,14 +383,68 @@ const DUMMY_RECENT: any[] = [
     }
 ];
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const DUMMY_ACTIVE = null;
+
+const toNumber = (value: unknown, fallback = 0): number => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toPeso = (value: number): string => `\u20B1${value.toFixed(2)}`;
+
+const displayMoney = (value: unknown): string => {
+    const numeric = Number(String(value ?? '').replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(numeric)) return String(value ?? '').replace(/â‚±/g, '\u20B1');
+    return `\u20B1${numeric.toFixed(2)}`;
+};
+
+const normalizePaymentMethod = (value: unknown): string => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return 'Cash on Delivery';
+    if (raw === 'cod' || raw === 'cash' || raw.includes('cash on delivery')) return 'Cash on Delivery';
+    if (raw.includes('gcash')) return 'GCash';
+    if (raw.includes('maya') || raw.includes('paymaya')) return 'Maya';
+    if (raw === 'e-wallet' || raw === 'ewallet') return 'E-Wallet';
+    return String(value);
+};
+
+const extractRawOrderItems = (backendOrder: any): any[] => {
+    if (Array.isArray(backendOrder?.items)) return backendOrder.items;
+    if (Array.isArray(backendOrder?.order_items)) return backendOrder.order_items;
+    if (Array.isArray(backendOrder?.line_items)) return backendOrder.line_items;
+    if (Array.isArray(backendOrder?.products)) return backendOrder.products;
+    if (Array.isArray(backendOrder?.data?.items)) return backendOrder.data.items;
+    return [];
+};
+
+const normalizeItemsList = (rawItems: any[]): { itemsList: OrderItem[]; itemCount: number; computedSubtotal: number } => {
+    const itemsList: OrderItem[] = rawItems.map((raw) => {
+        const quantity = toNumber(raw?.quantity ?? raw?.qty ?? raw?.pivot?.quantity, 1);
+        const unitPrice = toNumber(raw?.price ?? raw?.unit_price ?? raw?.pivot?.price, 0);
+        const lineTotal = toNumber(raw?.total ?? raw?.line_total, unitPrice * quantity);
+        return {
+            title: raw?.name || raw?.title || raw?.product_name || 'Product',
+            quantity,
+            price: toPeso(lineTotal),
+        };
+    });
+
+    const itemCount = itemsList.reduce((sum, item) => sum + toNumber(item.quantity, 0), 0);
+    const computedSubtotal = itemsList.reduce((sum, item) => {
+        const parsed = Number(String(item.price).replace(/[^\d.]/g, ''));
+        return sum + (Number.isFinite(parsed) ? parsed : 0);
+    }, 0);
+
+    return { itemsList, itemCount, computedSubtotal };
+};
 
 // --- Main Screen ---
 
 export default function MyOrdersScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { orders } = useUiStore();
+    const { orders, addresses, activeAddressId } = useUiStore();
     const colorScheme = useColorScheme() ?? 'light';
     const theme = Colors[colorScheme];
     
@@ -396,6 +455,8 @@ export default function MyOrdersScreen() {
     const [isReceiptVisible, setIsReceiptVisible] = useState(false);
     const [selectedOrder, setSelectedOrder] = useState<any>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const activeAddress = addresses.find((a) => a.id === activeAddressId) || addresses[0];
+    const fallbackAddress = activeAddress?.fullAddress || 'No delivery address selected';
 
     const loadOrders = async () => {
         setIsRefreshing(true);
@@ -403,7 +464,8 @@ export default function MyOrdersScreen() {
             const backendOrders = await fetchMyOrders();
             
             // Map backend structure to local UI structure
-            const mappedOrders: Order[] = backendOrders.map(bo => ({
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const _mappedOrdersLegacy: Order[] = backendOrders.map(bo => ({
                 id: String(bo.order_id),
                 orderId: `ORD-${bo.order_id}`,
                 backendOrderId: bo.order_id,
@@ -426,8 +488,53 @@ export default function MyOrdersScreen() {
                 image: require('../assets/images/sushi-hero.png'),
             }));
 
-            if (mappedOrders.length > 0) {
-                setOrders(mappedOrders);
+            const mappedOrdersNormalized: Order[] = backendOrders.map((bo: any) => {
+                const rawItems = extractRawOrderItems(bo);
+                const { itemsList, itemCount, computedSubtotal } = normalizeItemsList(rawItems);
+
+                const backendOrderId = toNumber(bo.order_id ?? bo.id, 0);
+                const localMatch = orders.find((o) =>
+                    (o.backendOrderId && backendOrderId && o.backendOrderId === backendOrderId) ||
+                    o.orderId === `ORD-${backendOrderId}`
+                );
+
+                const localDeliveryFee = localMatch ? Number(String(localMatch.deliveryFee).replace(/[^\d.]/g, '')) : 38;
+                const localTotal = localMatch ? Number(String(localMatch.totalPrice).replace(/[^\d.]/g, '')) : 0;
+
+                const deliveryFeeNum = toNumber(bo.delivery_fee ?? bo.shipping_fee, localDeliveryFee || 38);
+                const totalAmountNum = toNumber(bo.total_amount ?? bo.total ?? bo.grand_total, localTotal || (computedSubtotal + deliveryFeeNum));
+                const subtotalNum = toNumber(bo.subtotal ?? bo.items_total, computedSubtotal || Math.max(0, totalAmountNum - deliveryFeeNum));
+
+                const normalizedItemsList = itemsList.length > 0 ? itemsList : (localMatch?.itemsList || []);
+                const normalizedItemCount = itemCount > 0
+                    ? itemCount
+                    : (localMatch?.items || normalizedItemsList.reduce((sum, i) => sum + toNumber(i.quantity, 0), 0));
+                const firstTitle = normalizedItemsList[0]?.title || bo.title || localMatch?.title || 'MakiCaps Order';
+
+                return {
+                    id: localMatch?.id || String(backendOrderId),
+                    orderId: localMatch?.orderId || `ORD-${backendOrderId}`,
+                    backendOrderId: backendOrderId || localMatch?.backendOrderId,
+                    items: normalizedItemCount,
+                    totalPrice: toPeso(totalAmountNum),
+                    subtotal: toPeso(subtotalNum),
+                    deliveryFee: toPeso(deliveryFeeNum),
+                    title: normalizedItemCount > 1 ? `${firstTitle} + ${normalizedItemCount - 1} more` : firstTitle,
+                    status: bo.status === 'delivered' ? 'Delivered' :
+                        bo.status === 'cancelled' ? 'Cancelled' : 'In Progress',
+                    date: bo.created_at
+                        ? new Date(bo.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
+                        : (localMatch?.date || 'N/A'),
+                    deliveryTime: localMatch?.deliveryTime || 'Today, 4:30 PM',
+                    paymentMethod: normalizePaymentMethod(bo.payment_method || localMatch?.paymentMethod),
+                    fullAddress: bo.address || bo.delivery_address || localMatch?.fullAddress || fallbackAddress,
+                    itemsList: normalizedItemsList,
+                    image: localMatch?.image || require('../assets/images/sushi-hero.png'),
+                };
+            });
+
+            if (mappedOrdersNormalized.length > 0) {
+                setOrders(mappedOrdersNormalized);
             }
         } catch (e) {
             console.error('Refresh orders failed', e);
@@ -438,6 +545,7 @@ export default function MyOrdersScreen() {
 
     React.useEffect(() => {
         loadOrders();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const openReceipt = (order: any) => {
@@ -453,8 +561,8 @@ export default function MyOrdersScreen() {
         );
     };
 
-    const activeOrders = filterBySearch([...orders.filter(o => o.status === 'In Progress'), ...(DUMMY_ACTIVE ? [DUMMY_ACTIVE] : [])]);
-    const completedOrders = filterBySearch([...orders.filter(o => o.status === 'Delivered'), ...DUMMY_RECENT]);
+    const activeOrders = filterBySearch(orders.filter(o => o.status === 'In Progress'));
+    const completedOrders = filterBySearch(orders.filter(o => o.status === 'Delivered'));
     const cancelledOrders = filterBySearch(orders.filter(o => o.status === 'Cancelled'));
 
     const currentDisplayOrders = activeTab === 'Active' ? activeOrders :

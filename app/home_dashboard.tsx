@@ -1,17 +1,26 @@
 import { fetchUserFavorites, toggleUserFavorite } from '@/lib/auth_api';
-import { ensureMenuStoreLoaded, useMenuStore, type Food, type Category } from '@/lib/menu_store';
-import { addToCart, setFavorites, toggleFavorite, useUiStore } from '@/lib/ui_store';
-import { Feather, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMenuStore, refreshMenuStore, type Food } from '@/lib/menu_store';
 import {
+  addToCart,
+  formatAddressForDisplay,
+  setFavorites,
+  toggleFavorite,
+  useUiStore,
+  validateCartAgainstMenu
+} from '@/lib/ui_store';
+import { useLocationDetection } from '@/hooks/useLocationDetection';
+import { getDistanceKm } from '@/lib/google_location';
+import { Feather, Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
   Dimensions,
+  Keyboard,
   Platform,
   Animated as RNAnimated,
-  Easing as RNEasing,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -19,8 +28,7 @@ import {
   TextInput,
   TouchableOpacity,
   useWindowDimensions,
-  View,
-  Keyboard
+  View
 } from 'react-native';
 import Animated, {
   Easing,
@@ -28,324 +36,43 @@ import Animated, {
   useSharedValue,
   withTiming
 } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// Components
 import CartPanel from '../components/CartPanel';
 import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
 import FavoritesPanel from '../components/FavoritesPanel';
 import FoodDetailModal from '../components/FoodDetailModal';
 import ProfilePanel from '../components/ProfilePanel';
 import StoresPanel from '../components/StoresPanel';
+import FoodCard from '../components/FoodCard';
+import BottomNav, { type NavTab } from '../components/BottomNav';
+import CategoryIcon from '../components/CategoryIcon';
 
-type NavTab = 'home' | 'stores' | 'heart' | 'shopping-cart' | 'user';
 type FilterMode = 'default' | 'low_price' | 'high_calorie' | 'favorites';
 type PriceRange = 'all' | 'under_8' | '8_to_10' | 'above_10';
-type FilterState = {
-  category: string;
-  search: string;
-  mode: FilterMode;
-  favorites: string[];
-  priceRange: PriceRange;
-};
 
-type FoodCardProps = {
-  item: Food;
-  width: number;
-  isFavorite: boolean;
-  onToggleFavorite: (foodId: string) => void;
-  onAddToCart: (foodId: string) => void;
-  onPress: (item: Food) => void;
-};
-type BottomNavProps = {
-  navBottomOffset: number;
-  activeTab: NavTab;
-  onTabPress: (tab: NavTab) => void;
-  favoritesCount: number;
-  cartCount: number;
-  openLogoutSheet?: () => void;
-};
-
-const navTabs: NavTab[] = ['home', 'heart', 'shopping-cart', 'stores', 'user'];
-const priceRanges: { id: PriceRange; label: string }[] = [
-  { id: 'all', label: 'All Prices' },
-  { id: 'under_8', label: 'Under ₱450' },
-  { id: '8_to_10', label: '₱450 - ₱550' },
-  { id: 'above_10', label: 'Above ₱550' },
-];
 const NAV_HEIGHT = 60;
-const NAV_BOTTOM_IOS = 34;
-const NAV_BOTTOM_ANDROID = 46;
 const BOTTOM_NAV_WIDTH = 300;
 const TAB_BUTTON_SIZE = 40;
-const MENU_CARD_HEIGHT = 238;
 
 const getPriceValue = (price: string): number =>
   Number(price.replace('\u20B1', '').replace(',', '').trim());
 const getCaloriesValue = (calories: string): number => Number(calories.replace(' kcal', ''));
 
-const filterByCategory = (list: Food[], category: string): Food[] => {
-  if (category === 'All') return list;
-  return list.filter((food) => food.category === category);
-};
-
-const filterBySearch = (list: Food[], search: string): Food[] => {
-  const normalizedSearch = search.trim().toLowerCase();
-  if (!normalizedSearch) return list;
-  return list.filter(
-    (food) =>
-      food.title.toLowerCase().includes(normalizedSearch) ||
-      food.category.toLowerCase().includes(normalizedSearch)
-  );
-};
-
-const filterByFavorites = (list: Food[], favorites: string[]): Food[] =>
-  list.filter((food) => favorites.includes(food.id));
-
-const filterByPriceRange = (list: Food[], priceRange: PriceRange): Food[] => {
-  if (priceRange === 'all') return list;
-
-  return list.filter((food) => {
-    const value = getPriceValue(food.price);
-    if (priceRange === 'under_8') return value < 450;
-    if (priceRange === '8_to_10') return value >= 450 && value <= 550;
-    return value > 550;
-  });
-};
-
-const sortByMode = (list: Food[], mode: FilterMode): Food[] => {
-  if (mode === 'low_price') {
-    return [...list].sort((a, b) => getPriceValue(a.price) - getPriceValue(b.price));
-  }
-
-  if (mode === 'high_calorie') {
-    return [...list].sort(
-      (a, b) => getCaloriesValue(b.calories) - getCaloriesValue(a.calories)
-    );
-  }
-
-  return list;
-};
-
-const applyAllFilters = (list: Food[], state: FilterState): Food[] => {
-  const byCategory = filterByCategory(list, state.category);
-  const bySearch = filterBySearch(byCategory, state.search);
-  const byPriceRange = filterByPriceRange(bySearch, state.priceRange);
-
-  if (state.mode === 'favorites') {
-    return filterByFavorites(byPriceRange, state.favorites);
-  }
-
-  return sortByMode(byPriceRange, state.mode);
-};
-
-const FoodCard = memo(function FoodCard({
-  item,
-  width,
-  isFavorite,
-  onToggleFavorite,
-  onAddToCart,
-  onPress,
-}: FoodCardProps) {
-  return (
-    <TouchableOpacity
-      activeOpacity={0.9}
-      style={[styles.foodCard, { width }]}
-      onPress={() => onPress(item)}
-    >
-      <View style={styles.foodCardBody}>
-        <View style={[styles.foodImageWrap, !item.image && { backgroundColor: '#F3ECE0', justifyContent: 'center', alignItems: 'center' }]}>
-          {item.image ? (
-            <Image
-              source={item.image}
-              style={styles.foodImage}
-              contentFit="cover"
-              transition={200}
-            />
-          ) : (
-            <Feather name="image" size={24} color="#DCCDBE" />
-          )}
-        </View>
-
-        <Text style={styles.foodTitle} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <Text style={styles.priceBelowTitle}>{item.price}</Text>
-
-        {item.description ? (
-          <Text style={styles.foodDescription} numberOfLines={2}>
-            {item.description.split(' ').slice(0, 7).join(' ')}
-            {item.description.split(' ').length > 7 ? '...' : ''}
-          </Text>
-        ) : null}
-
-        <View style={styles.foodBottomRow}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.addIconButton}
-            onPress={() => onAddToCart(item.id)}
-          >
-            <Feather name="plus" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <TouchableOpacity
-        activeOpacity={0.8}
-        style={styles.heartButton}
-        onPress={() => onToggleFavorite(item.id)}
-      >
-        <FontAwesome
-          name={isFavorite ? 'heart' : 'heart-o'}
-          size={16}
-          color={isFavorite ? '#D94F3D' : '#8A8A8A'}
-        />
-      </TouchableOpacity>
-    </TouchableOpacity >
-  );
-});
-
-const CategoryIcon = memo(function CategoryIcon({ cat, isActive }: { cat: Category; isActive: boolean }) {
-  const [imageError, setImageError] = useState(false);
-
-  if (cat.image_path && !imageError) {
-    return (
-      <Image
-        source={{ uri: cat.image_path }}
-        style={styles.categoryImage}
-        contentFit="cover"
-        transition={200}
-        onError={() => {
-          console.log(`Image load failed for ${cat.name}`);
-          setImageError(true);
-        }}
-        onLoad={() => console.log(`Image loaded successfully for ${cat.name}`)}
-      />
-    );
-  }
-
-  return <Feather name="tag" size={14} color={isActive ? "#D94F3D" : "#8A8A8A"} />;
-});
-
-const BottomNav = memo(function BottomNav({
-  navBottomOffset,
-  activeTab,
-  onTabPress,
-  favoritesCount,
-  cartCount,
-  openLogoutSheet,
-}: BottomNavProps) {
-  const tabAnimations = useRef<Record<NavTab, RNAnimated.Value>>({
-    home: new RNAnimated.Value(activeTab === 'home' ? 1 : 0),
-    stores: new RNAnimated.Value(activeTab === 'stores' ? 1 : 0),
-    heart: new RNAnimated.Value(activeTab === 'heart' ? 1 : 0),
-    'shopping-cart': new RNAnimated.Value(activeTab === 'shopping-cart' ? 1 : 0),
-    user: new RNAnimated.Value(activeTab === 'user' ? 1 : 0),
-  });
-
-  useEffect(() => {
-    RNAnimated.parallel(
-      navTabs.map((tab) =>
-        RNAnimated.timing(tabAnimations.current[tab], {
-          toValue: tab === activeTab ? 1 : 0,
-          duration: 260,
-          easing: RNEasing.out(RNEasing.quad),
-          useNativeDriver: true,
-        })
-      )
-    ).start();
-  }, [activeTab]);
-
-  return (
-    <View style={[styles.bottomNav, { bottom: navBottomOffset }]}>
-      {navTabs.map((tab) => {
-        const activeProgress = tabAnimations.current[tab];
-        const inactiveProgress = activeProgress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [1, 0],
-        });
-        const activeScale = activeProgress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0.92, 1],
-        });
-
-        return (
-          <TouchableOpacity
-            key={tab}
-            activeOpacity={0.8}
-            onPress={() => onTabPress(tab)}
-            style={styles.navTabButton}
-          >
-            <RNAnimated.View
-              pointerEvents="none"
-              style={[
-                styles.navTabActiveBg,
-                {
-                  opacity: activeProgress,
-                  transform: [{ scale: activeScale }],
-                },
-              ]}
-            />
-            <View style={styles.navIconWrap}>
-              <RNAnimated.View style={[styles.navIconLayer, { opacity: inactiveProgress }]}>
-                {tab === 'stores' ? (
-                  <MaterialCommunityIcons name="store" size={20} color="#8A8A8A" />
-                ) : (
-                  <Feather 
-                    name={
-                      tab === 'shopping-cart' ? 'shopping-cart' : 
-                      tab === 'heart' ? 'heart' : 
-                      tab as any
-                    } 
-                    size={18} 
-                    color="#8A8A8A" 
-                  />
-                )}
-              </RNAnimated.View>
-              <RNAnimated.View style={[styles.navIconLayer, { opacity: activeProgress }]}>
-                {tab === 'stores' ? (
-                  <MaterialCommunityIcons name="store" size={20} color="#FFFFFF" />
-                ) : (
-                  <Feather 
-                    name={
-                      tab === 'shopping-cart' ? 'shopping-cart' : 
-                      tab === 'heart' ? 'heart' : 
-                      tab as any
-                    } 
-                    size={18} 
-                    color="#FFFFFF" 
-                  />
-                )}
-              </RNAnimated.View>
-            </View>
-
-            {tab === 'heart' && favoritesCount > 0 && (
-              <View style={styles.navBadge}>
-                <Text style={styles.navBadgeText} numberOfLines={1}>
-                  {favoritesCount > 99 ? '99+' : favoritesCount}
-                </Text>
-              </View>
-            )}
-
-            {tab === 'shopping-cart' && cartCount > 0 && (
-              <View style={styles.navBadge}>
-                <Text style={styles.navBadgeText} numberOfLines={1}>
-                  {cartCount > 99 ? '99+' : cartCount}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-});
-
-
 export default function HomeDashboard() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { categories: categoryData, menuItems: menuData } = useMenuStore();
-  const { userId, favorites, cartItems, addresses, activeAddressId } = useUiStore();
+  const { categories: categoryData, menuItems: products } = useMenuStore();
+  const { 
+    userId, favorites, cartItems, addresses, activeAddressId, selectedBranch, 
+    orderMode, isLocationLoading 
+  } = useUiStore();
+  const { detectLocation, isLoadingGPS } = useLocationDetection();
+
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const favoritesCount = favorites.length;
+  
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<NavTab>((params.tab as NavTab) ?? 'home');
   const [activeCategory, setActiveCategory] = useState<string>('All');
@@ -353,39 +80,15 @@ export default function HomeDashboard() {
   const [notificationCount] = useState<number>(3);
   const [filterMode, setFilterMode] = useState<FilterMode>('default');
   const [priceRange, setPriceRange] = useState<PriceRange>('all');
-  const [showFilterPanel, setShowFilterPanel] = useState<boolean>(false);
   const [showDeliveryModal, setShowDeliveryModal] = useState<boolean>(false);
   const [isKeyboardVisible, setKeyboardVisible] = useState<boolean>(false);
-
-  useEffect(() => {
-    const keyboardDidShowListener = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => setKeyboardVisible(true)
-    );
-    const keyboardDidHideListener = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => setKeyboardVisible(false)
-    );
-
-    return () => {
-      keyboardDidShowListener.remove();
-      keyboardDidHideListener.remove();
-    };
-  }, []);
-
-  // Sync activeTab with URL params
-  useEffect(() => {
-    if (params.tab && params.tab !== activeTab) {
-      setActiveTab(params.tab as NavTab);
-    }
-  }, [params.tab]);
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
-  const [cart, setCart] = useState<Food[]>([]);
-  const contentOpacity = useRef(new RNAnimated.Value(1)).current;
-  const topInset = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0;
-  const navBottomOffset = Platform.OS === 'android' ? NAV_BOTTOM_ANDROID : NAV_BOTTOM_IOS;
-  const contentBottomPadding = NAV_HEIGHT + navBottomOffset + 24;
+
+  const insets = useSafeAreaInsets();
+  const topInset = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : insets.top;
+  const navBottomOffset = Math.max(insets.bottom, 12) + 20;
+  const contentBottomPadding = NAV_HEIGHT + navBottomOffset + 40;
 
   // Fly-to-cart animation logic
   const flyX = useSharedValue(0);
@@ -395,13 +98,11 @@ export default function HomeDashboard() {
 
   const triggerFlyAnimation = useCallback(() => {
     const { width: W_WIDTH, height: W_HEIGHT } = Dimensions.get('window');
-    // Start from center
     flyX.value = W_WIDTH / 2;
     flyY.value = W_HEIGHT / 2;
     flyScale.value = 0.5;
     flyOpacity.value = 1;
 
-    // Fly to cart icon (roughly top right)
     const targetX = W_WIDTH - 45;
     const targetY = topInset + 40;
 
@@ -411,7 +112,7 @@ export default function HomeDashboard() {
       if (finished) flyScale.value = withTiming(0, { duration: 300 });
     });
     flyOpacity.value = withTiming(0, { duration: 600, easing: Easing.in(Easing.exp) });
-  }, [topInset]);
+  }, [flyOpacity, flyScale, flyX, flyY, topInset]);
 
   const flyStyle = useAnimatedStyle(() => ({
     position: 'absolute',
@@ -432,80 +133,110 @@ export default function HomeDashboard() {
     ],
   }));
 
-  // --- Animations removed for instant feel ---
-  const headerAnim = useRef(new RNAnimated.Value(1)).current;
-  const titleAnim = useRef(new RNAnimated.Value(1)).current;
-  const searchAnim = useRef(new RNAnimated.Value(1)).current;
-  const catsAnim = useRef(new RNAnimated.Value(1)).current;
-  const gridAnim = useRef(new RNAnimated.Value(1)).current;
-
+  // Initial Data Loading
   useEffect(() => {
-    // No animations as per user request
-  }, []);
+    const loadData = async () => {
+      await detectLocation({ addresses, activeAddressId });
+      await refreshMenuStore();
+    };
+    loadData();
+  }, [activeAddressId]);
 
-  const makeEntrance = (anim: RNAnimated.Value, offsetY = 24) => ({
-    opacity: anim,
-    transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [offsetY, 0] }) }],
-  });
-
-  useEffect(() => {
-    ensureMenuStoreLoaded();
-  }, []);
-
-  // Fetch initial favorites if logged in
+  // Fetch favorites if logged in
   useEffect(() => {
     if (userId) {
       fetchUserFavorites(userId)
-        .then((fetchedFavs) => {
-          setFavorites(fetchedFavs);
-        })
+        .then((fetchedFavs) => setFavorites(fetchedFavs))
         .catch((e) => console.log('Failed to hydrate favorites:', e));
     }
   }, [userId]);
+
+  // Sync activeTab with route params
+  useEffect(() => {
+    if (params.tab) {
+      setActiveTab(params.tab as NavTab);
+    }
+  }, [params.tab]);
+
+  // Keyboard handling
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subShow = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const subHide = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      subShow.remove();
+      subHide.remove();
+    };
+  }, []);
+
+  // Sync activeTab with URL params
+  useEffect(() => {
+    if (params.tab && params.tab !== activeTab) {
+      setActiveTab(params.tab as NavTab);
+    }
+  }, [params.tab]);
+
+  // Validate cart when products/branch changes
+  useEffect(() => {
+    if (activeAddressId && products.length > 0 && cartItems.length > 0) {
+      const { removedCount } = validateCartAgainstMenu(products);
+      if (removedCount > 0) {
+        Alert.alert(
+          "Menu Updated",
+          "Some items in your cart are no longer available at this location and have been removed.",
+          [{ text: "OK" }]
+        );
+      }
+    }
+  }, [products, activeAddressId]);
 
   const cardWidth = useMemo(() => {
     const horizontalPadding = 40;
     const totalGap = 24;
     const available = width - horizontalPadding - totalGap;
-    return Math.max(150, available / 2);
+    return Math.max(140, available / 2 - 8);
   }, [width]);
-
-  const handleCategoryFilter = useCallback((categoryName: string) => {
-    setActiveCategory(categoryName);
-  }, []);
-
 
   const handleToggleFavorite = useCallback((foodId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    toggleFavorite(foodId); // Optimistic UI update
+    toggleFavorite(foodId);
     if (userId) {
-      toggleUserFavorite(userId, foodId).catch((e) => {
-        console.log('Failed to sync favorite toggle:', e);
-        // Revert UI theoretically, but omitting for simplicity here
-      });
+      toggleUserFavorite(userId, foodId).catch((e) => console.log('Sync favorite failed:', e));
     }
   }, [userId]);
 
-  const handleAddToCart = useCallback((foodId: string, quantity: number = 1) => {
+  const handleAddToCart = useCallback((item: Food, quantity: number = 1) => {
+    if (!activeAddress) {
+      Alert.alert("Address Required", "Please select a delivery address to check availability and start ordering.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Select Address", onPress: () => setShowDeliveryModal(true) }
+      ]);
+      return;
+    }
+    const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
+    const existingQty = cartItems.find((i) => i.id === item.id)?.quantity ?? 0;
+
+    if (existingQty + quantity > maxQuantity) {
+      Alert.alert('Maximum reached', 'Maximum available quantity reached');
+      return;
+    }
+
+    const result = addToCart(item.id, quantity, maxQuantity, {
+      title: item.title,
+      price: item.price,
+      image: item.image,
+      description: item.description
+    });
+
+    if (!result.ok) {
+      Alert.alert('Maximum reached', result.message || 'Maximum available quantity reached');
+      return;
+    }
+    
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    addToCart(foodId, quantity);
     triggerFlyAnimation();
-  }, [triggerFlyAnimation]);
-
-  const handleFilterPress = useCallback(() => {
-    setShowFilterPanel((prev) => !prev);
-  }, []);
-
-  const handlePriceRangeFilter = useCallback((range: PriceRange) => {
-    setPriceRange(range);
-  }, []);
-  const handleResetFilters = useCallback(() => {
-    setActiveCategory('All');
-    setSearch('');
-    setPriceRange('all');
-    setFilterMode('default');
-    setShowFilterPanel(false);
-  }, []);
+  }, [cartItems, triggerFlyAnimation]);
 
   const handleFoodPress = useCallback((item: Food) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -513,14 +244,8 @@ export default function HomeDashboard() {
     setShowDetailModal(true);
   }, []);
 
-  const handleAddToCartLocal = useCallback((item: Food, quantity: number = 1) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    addToCart(item.id, quantity); // Sync with store
-    triggerFlyAnimation();
-  }, [triggerFlyAnimation]);
-
   const handleCheckout = useCallback(() => {
-    const checkedCartItems = cartItems.filter((i: any) => i.checked);
+    const checkedCartItems = cartItems.filter((i) => i.checked);
     const checkoutData = checkedCartItems.map(cartItem => ({
       id: cartItem.id,
       quantity: cartItem.quantity
@@ -528,76 +253,119 @@ export default function HomeDashboard() {
 
     setShowDetailModal(false);
     setTimeout(() => {
-      // @ts-ignore
       router.push({
         pathname: '/checkout',
         params: { cart: JSON.stringify(checkoutData) }
-      });
+      } as any);
     }, 300);
-  }, [cartItems, menuData, router]);
+  }, [cartItems, router]);
 
-  const handleTabPress = useCallback(
-    (tab: NavTab) => {
-      if (tab === activeTab) return;
+  const handleTabPress = useCallback((tab: NavTab) => {
+    if (tab === activeTab) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setActiveTab(tab);
+  }, [activeTab]);
 
-      // Instant switch: No animations as per user request
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      setActiveTab(tab);
-      setShowFilterPanel(false); 
-      contentOpacity.setValue(1);
-    },
-    [activeTab, contentOpacity, router]
+  const activeAddress = useMemo(
+    () => addresses.find((a) => a.id === activeAddressId),
+    [addresses, activeAddressId]
   );
+
+  const distanceToBranch = useMemo(() => {
+    if (!selectedBranch || !activeAddress?.latitude || !activeAddress?.longitude || !selectedBranch.latitude || !selectedBranch.longitude) return null;
+    return getDistanceKm(
+      activeAddress.latitude,
+      activeAddress.longitude,
+      selectedBranch.latitude,
+      selectedBranch.longitude
+    );
+  }, [selectedBranch, activeAddress]);
+
+  const isOutsideRadius = useMemo(() => {
+    if (distanceToBranch === null || !selectedBranch?.delivery_radius_km) return false;
+    return distanceToBranch > selectedBranch.delivery_radius_km;
+  }, [distanceToBranch, selectedBranch]);
 
   const filteredFoods = useMemo(() => {
-    return applyAllFilters(menuData, {
-      category: activeCategory,
-      search,
-      mode: filterMode,
-      favorites,
-      priceRange,
-    });
-  }, [activeCategory, favorites, filterMode, menuData, priceRange, search]);
+    let list = products;
+    if (activeCategory !== 'All') {
+      list = list.filter(f => f.category === activeCategory);
+    }
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter(f => f.title.toLowerCase().includes(s) || f.category.toLowerCase().includes(s));
+    }
+    if (priceRange !== 'all') {
+      list = list.filter(f => {
+        const v = getPriceValue(f.price);
+        if (priceRange === 'under_8') return v < 450;
+        if (priceRange === '8_to_10') return v >= 450 && v <= 550;
+        return v > 550;
+      });
+    }
+    if (filterMode === 'low_price') {
+      list = [...list].sort((a, b) => getPriceValue(a.price) - getPriceValue(b.price));
+    } else if (filterMode === 'high_calorie') {
+      list = [...list].sort((a, b) => getCaloriesValue(b.calories) - getCaloriesValue(a.calories));
+    } else if (filterMode === 'favorites') {
+      list = list.filter(f => favorites.includes(f.id));
+    }
+    return list;
+  }, [activeCategory, favorites, filterMode, products, priceRange, search]);
 
   const favoriteFoods = useMemo(
-    () => menuData.filter((item) => favorites.includes(item.id)),
-    [favorites, menuData]
+    () => products.filter((item) => favorites.includes(item.id)),
+    [favorites, products]
   );
 
-  const renderFood = useCallback(
-    ({ item }: { item: Food }) => (
-      <FoodCard
-        item={item}
-        width={cardWidth}
-        isFavorite={favorites.includes(item.id)}
-        onToggleFavorite={handleToggleFavorite}
-        onAddToCart={handleAddToCart}
-        onPress={handleFoodPress}
-      />
-    ),
-    [cardWidth, favorites, handleAddToCart, handleToggleFavorite, handleFoodPress]
-  );
+  const isOpen = selectedBranch?.status ? selectedBranch.status.toLowerCase() === 'open' : true;
 
   return (
-    <SafeAreaView style={[styles.container, { paddingTop: topInset }]}>
+    <View style={[styles.container, { paddingTop: topInset }]}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8F9FB" />
 
-      {(activeTab === 'home' || activeTab === 'heart') && (
-        <RNAnimated.View style={styles.header}>
+      {isOutsideRadius && activeAddress && (
+        <View style={styles.outsideRadiusBanner}>
+          <Ionicons name="warning" size={18} color="#FFF" />
+          <Text style={styles.outsideRadiusText}>
+            Outside delivery area ({distanceToBranch?.toFixed(1)}km). Items may not be deliverable.
+          </Text>
+        </View>
+      )}
+
+      {!activeAddress && !isLocationLoading && (
+        <View style={styles.softMenuBanner}>
+          <Ionicons name="information-circle-outline" size={18} color="#FFF" />
+          <Text style={styles.softMenuText}>
+            Menu and pricing may vary by location. Select address to check availability.
+          </Text>
+        </View>
+      )}
+
+      {activeTab === 'home' && (
+        <View style={styles.header}>
           <TouchableOpacity
             activeOpacity={0.8}
             style={styles.locationContainer}
             onPress={() => setShowDeliveryModal(true)}
           >
-            <Feather name="map-pin" size={18} color="#D94F3D" />
+            <View style={styles.locationIconWrap}>
+              {isLocationLoading ? (
+                 <ActivityIndicator size="small" color="#D94F3D" />
+              ) : (
+                 <Feather name="map-pin" size={18} color="#D94F3D" />
+              )}
+            </View>
             <View style={styles.deliveryTextWrap}>
-              <Text style={styles.deliveryLabel}>Deliver Today</Text>
+              <Text style={styles.deliveryLabel}>
+                {orderMode === 'delivery' ? 'Deliver to' : 'Pick up at'}
+              </Text>
               <View style={styles.deliverySubRow}>
                 <Text style={styles.deliveryAddress} numberOfLines={1}>
                   {(() => {
-                    if (!addresses || addresses.length === 0) return 'Add Delivery Address';
-                    const active = addresses.find(a => a.id === activeAddressId) || addresses[0];
-                    return active.street || active.subdivision || active.fullAddress.split(',')[0] || 'Unnamed Location';
+                    if (isLocationLoading) return 'Detecting location...';
+                    if (!activeAddress) return 'Select Location';
+                    return formatAddressForDisplay(activeAddress);
                   })()}
                 </Text>
                 <Feather name="chevron-down" size={14} color="#8A8A8A" style={{ marginLeft: 2 }} />
@@ -608,107 +376,131 @@ export default function HomeDashboard() {
           <View style={styles.headerRight}>
             <TouchableOpacity activeOpacity={0.8} style={styles.notificationButton}>
               <Feather name="bell" size={18} color="#2C2C2C" />
-              {notificationCount > 0 ? (
+              {notificationCount > 0 && (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>{notificationCount > 99 ? '99+' : notificationCount}</Text>
                 </View>
-              ) : null}
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
               activeOpacity={0.8}
               style={styles.cartButton}
-              onPress={() => handleTabPress('shopping-cart')}
+              onPress={() => setActiveTab('shopping-cart')}
             >
               <Feather name="shopping-cart" size={18} color="#2C2C2C" />
-              {cartCount > 0 ? (
+              {cartCount > 0 && (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>{cartCount > 99 ? '99+' : cartCount}</Text>
                 </View>
-              ) : null}
+              )}
             </TouchableOpacity>
           </View>
-        </RNAnimated.View>
+        </View>
       )}
 
       {activeTab === 'home' && (
-        <RNAnimated.View style={styles.titleWrap}>
+        <View style={styles.titleWrap}>
           <Text style={styles.title}>Authentic Japanese</Text>
           <Text style={styles.title}>Food Delivered Fast</Text>
-        </RNAnimated.View>
+          {selectedBranch && (
+            <View style={styles.branchStatusPill}>
+              <View style={[styles.statusDot, { backgroundColor: selectedBranch.status === 'closed' ? '#FF5252' : '#4CAF50' }]} />
+              <Text style={styles.servingFromText}>
+                Serving From: <Text style={styles.branchNameBold}>{selectedBranch.name}</Text>
+                {selectedBranch.status_text && (
+                   <Text> • {selectedBranch.status_text}</Text>
+                )}
+              </Text>
+            </View>
+          )}
+        </View>
       )}
 
-      <RNAnimated.View
-        style={[styles.contentWrap, { opacity: contentOpacity, flex: 1 }]}
-      >
+      <View style={styles.contentWrap}>
         <View style={[styles.tabContainer, activeTab === 'home' ? styles.visibleTab : styles.hiddenTab]}>
-            <RNAnimated.View style={[styles.searchRow, makeEntrance(searchAnim, 16)]}>
-              <View style={styles.searchContainer}>
-                <Feather name="search" size={18} color="#8A8A8A" />
-                <TextInput
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder="Search sushi, ramen..."
-                  placeholderTextColor="#8A8A8A"
-                  style={styles.searchInput}
-                />
-              </View>
+          <View style={styles.searchRow}>
+            <View style={styles.searchContainer}>
+              <Feather name="search" size={18} color="#8A8A8A" />
+              <TextInput
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Search sushi, ramen..."
+                placeholderTextColor="#8A8A8A"
+                style={styles.searchInput}
+              />
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={styles.filterButton}
+              onPress={() => { /* Toggle filter panel */ }}
+            >
+              <Feather name="sliders" size={18} color="#2C2C2C" />
+            </TouchableOpacity>
+          </View>
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={styles.filterButton}
-                onPress={handleFilterPress}
-              >
-                <Feather name="sliders" size={18} color="#2C2C2C" />
-              </TouchableOpacity>
-            </RNAnimated.View>
+          <View style={styles.categoriesScrollWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoriesContent}
+            >
+              {categoryData.map((cat) => {
+                const isActive = cat.name === activeCategory;
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveCategory(cat.name)}
+                    style={[styles.categoryCard, isActive && styles.categoryCardActive]}
+                  >
+                    <View style={[styles.categoryIconWrap, isActive && styles.categoryIconWrapActive]}>
+                      <CategoryIcon cat={cat} isActive={isActive} />
+                    </View>
+                    <Text style={[styles.categoryName, isActive && styles.categoryNameActive]}>
+                      {cat.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
 
-            <RNAnimated.View style={[styles.categoriesScrollWrap, makeEntrance(catsAnim, 14)]}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.categoriesContent}
-              >
-                {categoryData.map((cat) => {
-                  const isActive = cat.name === activeCategory;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      activeOpacity={0.8}
-                      onPress={() => handleCategoryFilter(cat.name)}
-                      style={[styles.categoryCard, isActive && styles.categoryCardActive]}
-                    >
-                      <View style={[styles.categoryIconWrap, isActive && styles.categoryIconWrapActive]}>
-                        <CategoryIcon cat={cat} isActive={isActive} />
-                      </View>
-                      <Text style={[styles.categoryName, isActive && styles.categoryNameActive]}>
-                        {cat.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-
-              </ScrollView>
-            </RNAnimated.View>
-
+          {products.length === 0 && !isLoadingGPS ? (
+            <View style={styles.emptyProducts}>
+              <Feather name="map-pin" size={40} color="#DCCDBE" style={{ marginBottom: 16 }} />
+              <Text style={styles.emptyTitle}>No products available in your area</Text>
+              <Text style={styles.emptyText}>We are not delivering to this location yet. Check back soon!</Text>
+            </View>
+          ) : (
             <RNAnimated.FlatList
               data={filteredFoods}
               keyExtractor={(item) => item.id}
-              renderItem={renderFood}
+              renderItem={({ item }) => (
+                <FoodCard
+                  item={item}
+                  width={cardWidth}
+                  isFavorite={favorites.includes(item.id)}
+                  isOpen={isOpen}
+                  onToggleFavorite={handleToggleFavorite}
+                  onAddToCart={handleAddToCart}
+                  onPress={handleFoodPress}
+                />
+              )}
               numColumns={2}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={[styles.gridContent, { paddingBottom: contentBottomPadding }]}
               columnWrapperStyle={styles.gridRow}
-              style={makeEntrance(gridAnim, 12)}
             />
+          )}
         </View>
 
         <View style={[styles.tabContainer, activeTab === 'stores' ? styles.visibleTab : styles.hiddenTab]}>
           <StoresPanel
             bottomPadding={contentBottomPadding}
             onOrderNow={() => {
-                setActiveTab('home');
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              setActiveTab('home');
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             }}
           />
         </View>
@@ -717,7 +509,10 @@ export default function HomeDashboard() {
           <FavoritesPanel
             items={favoriteFoods}
             bottomPadding={contentBottomPadding}
-            onAddToCart={handleAddToCart}
+            onAddToCart={(id) => {
+              const food = products.find(p => p.id === id);
+              if (food) handleAddToCart(food);
+            }}
             onToggleFavorite={handleToggleFavorite}
           />
         </View>
@@ -734,7 +529,7 @@ export default function HomeDashboard() {
             bottomPadding={contentBottomPadding}
           />
         </View>
-      </RNAnimated.View>
+      </View>
 
       {!isKeyboardVisible && (
         <BottomNav
@@ -765,15 +560,13 @@ export default function HomeDashboard() {
         isFavorite={selectedFood ? favorites.includes(selectedFood.id) : false}
         onToggleFavorite={handleToggleFavorite}
         onClose={() => setShowDetailModal(false)}
-        onAddToCart={handleAddToCartLocal}
+        onAddToCart={handleAddToCart}
         onCheckout={() => {
           setShowDetailModal(false);
           setActiveTab('shopping-cart');
         }}
       />
-
-
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -827,14 +620,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
-  logoutHeaderButton: {
-    width: 40,
-    height: 40,
-    backgroundColor: '#FDECEB',
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   notificationButton: {
     width: 40,
     height: 40,
@@ -848,28 +633,7 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 2,
   },
-  adminButton: {
-    width: 40,
-    height: 40,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   cartButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
-  },
-  storeButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -910,14 +674,38 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#2C2C2C',
     lineHeight: 34,
+    fontFamily: 'Outfit_800ExtraBold',
+  },
+  branchStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginTop: 12,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#4CAF50',
+    marginRight: 8,
+  },
+  servingFromText: {
+    fontSize: 12,
+    color: '#2E7D32',
+    fontFamily: 'Outfit_500Medium',
+  },
+  branchNameBold: {
+    fontWeight: '700',
   },
   contentWrap: {
     flex: 1,
-    backgroundColor: '#F8F9FB', // Ensure constant background to prevent flickering
   },
   tabContainer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#F8F9FB',
   },
   visibleTab: {
     opacity: 1,
@@ -954,6 +742,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#2C2C2C',
     fontWeight: '500',
+    fontFamily: 'Outfit_500Medium',
   },
   filterButton: {
     width: 52,
@@ -991,7 +780,6 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   categoryCardActive: {
-    backgroundColor: '#FFFFFF',
     borderColor: '#D94F3D',
   },
   categoryIconWrap: {
@@ -1006,19 +794,11 @@ const styles = StyleSheet.create({
   categoryIconWrapActive: {
     backgroundColor: '#FDECEB',
   },
-  categoryIcon: {
-    width: 18,
-    height: 18,
-  },
-  categoryImage: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-  },
   categoryName: {
     fontSize: 14,
     fontWeight: '600',
     color: '#8A8A8A',
+    fontFamily: 'Outfit_600SemiBold',
   },
   categoryNameActive: {
     color: '#D94F3D',
@@ -1030,234 +810,63 @@ const styles = StyleSheet.create({
   },
   gridRow: {
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 16,
   },
-  foodCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 16,
-    elevation: 3,
+  emptyProducts: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  foodCardBody: {
+  emptyTitle: {
+    fontSize: 16,
+    color: '#8A8A8A',
+    fontWeight: '600',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#8A8A8A',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  outsideRadiusBanner: {
+    backgroundColor: '#FF5252',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  outsideRadiusText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: 'Outfit_600SemiBold',
     flex: 1,
-    justifyContent: 'space-between',
   },
-  foodImageWrap: {
-    width: '100%',
-    aspectRatio: 1.1,
-    borderRadius: 20,
-    backgroundColor: '#F9F9F9',
-    overflow: 'hidden',
-    marginBottom: 12,
+  softMenuBanner: {
+    backgroundColor: '#8A8A8A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    gap: 10,
   },
-  foodImage: {
-    width: '100%',
-    height: '100%',
+  softMenuText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 16,
   },
-  heartButton: {
-    position: 'absolute',
-    top: 20,
-    right: 20,
+  locationIconWrap: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: '#FDECEB',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  foodTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#2C2C2C',
-  },
-  foodBottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  priceBelowTitle: {
-    color: '#D94F3D',
-    fontWeight: '700',
-    fontSize: 14,
-    marginTop: 4,
-  },
-  foodDescription: {
-    color: '#8A8A8A',
-    fontSize: 12,
-    marginTop: 6,
-    lineHeight: 18,
-  },
-  addIconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#D94F3D',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 20,
-    elevation: 10,
-  },
-  bottomNav: {
-    position: 'absolute',
-    bottom: 0,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    height: NAV_HEIGHT,
-    width: BOTTOM_NAV_WIDTH,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 30,
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    shadowColor: '#000000',
-    shadowOpacity: 0.15,
-    shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 15,
-    elevation: 8,
-    zIndex: 100,
-  },
-  navTabButton: {
-    width: TAB_BUTTON_SIZE,
-    height: TAB_BUTTON_SIZE,
-    borderRadius: TAB_BUTTON_SIZE / 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navTabActiveBg: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#FF5800',
-    borderRadius: TAB_BUTTON_SIZE / 2,
-  },
-  navIconWrap: {
-    width: 22,
-    height: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'visible',
-  },
-  navIconLayer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navIconStore: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navBadge: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: '#FF5800',
-    borderRadius: 9,
-    minWidth: 18,
-    height: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
-    zIndex: 10,
-  },
-  navBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: 'bold',
-    lineHeight: 12,
-  },
-
-  // --- Logout Modal Styles ---
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalCenterContainer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-    zIndex: 1000,
-  },
-  logoutModalCard: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center',
-    elevation: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-  },
-  logoutIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#FDECEB', // Light red tint
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  logoutTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#2C2C2C', // Very dark instead of red
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  logoutSubtitle: {
-    fontSize: 15,
-    color: '#8A8A8A',
-    textAlign: 'center',
-    marginBottom: 28,
-    lineHeight: 22,
-    paddingHorizontal: 12,
-  },
-  logoutButtonsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    width: '100%',
-  },
-  logoutCancelButton: {
-    flex: 1,
-    height: 50,
-    borderRadius: 14,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoutCancelText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#2C2C2C',
-  },
-  logoutConfirmButton: {
-    flex: 1,
-    height: 50,
-    borderRadius: 14,
-    backgroundColor: '#D94F3D',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#D94F3D',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  logoutConfirmText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    marginRight: 4,
   },
 });

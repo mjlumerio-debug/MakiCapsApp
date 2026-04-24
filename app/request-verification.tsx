@@ -134,7 +134,7 @@ export default function RequestVerificationScreen() {
                                 </Text>
                                 {!isExtraSmall && (
                                     <Text style={[styles.subtitle, isSmallScreen && { fontSize: 12, lineHeight: 16 }]}>
-                                        Enter your email address and we'll send{'\n'}you a 6-digit verification code.
+                                        Enter your email address and we&apos;ll send{'\n'}you a 6-digit verification code.
                                     </Text>
                                 )}
                             </View>

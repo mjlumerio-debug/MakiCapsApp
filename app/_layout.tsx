@@ -20,6 +20,7 @@ import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { initRealtime } from '@/lib/realtime';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -41,6 +42,10 @@ export default function RootLayout() {
     }
   }, [loaded, error]);
 
+  useEffect(() => {
+    initRealtime();
+  }, []);
+
   if (!loaded && !error) {
     return null;
   }
@@ -61,7 +66,6 @@ export default function RootLayout() {
           <Stack.Screen name="forgot-password" />
           <Stack.Screen name="verify-code" />
           <Stack.Screen name="reset-password" />
-          <Stack.Screen name="stores" />
           <Stack.Screen name="my-orders" />
           <Stack.Screen name="track-order" options={{ animation: 'slide_from_right' }} />
         </Stack>

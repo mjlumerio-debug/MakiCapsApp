@@ -6,11 +6,8 @@ import {
     Text,
     TouchableOpacity,
     View,
-    Dimensions
 } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
-
-const { width } = Dimensions.get('window');
 
 type MakiModalType = 'success' | 'delete' | 'warning';
 

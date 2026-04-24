@@ -5,7 +5,6 @@ import {
     ActivityIndicator,
     Alert,
     Dimensions,
-    FlatList,
     Image,
     Platform,
     SafeAreaView,
@@ -23,12 +22,13 @@ import Animated, {
     withTiming
 } from 'react-native-reanimated';
 import { useMenuStore } from '../lib/menu_store';
-import { useUiStore, setActiveAddress, addOrder, clearCart, Order } from '../lib/ui_store';
-import { submitOrder, type OrderPayload } from '../lib/order_api';
+import { useUiStore, addOrder, clearCart, formatAddressForDisplay, Order } from '../lib/ui_store';
+import { getDistanceKm } from '../lib/google_location';
+import { submitOrder, validateCartStock, type OrderPayload } from '../lib/order_api';
 import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
 import * as Haptics from 'expo-haptics';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 const DELIVERY_FEE = 38.00;
 
 // TypeScript Interfaces
@@ -38,6 +38,8 @@ interface CheckoutItem {
     image: any;
     price: string | number;
     quantity: number;
+    stock?: number;
+    max_quantity?: number;
 }
 
 export default function CheckoutScreen() {
@@ -51,10 +53,14 @@ export default function CheckoutScreen() {
             if (params.cart) {
                 const sparseCart = JSON.parse(params.cart as string);
                 // Resolve full details from store
-                return sparseCart.map((item: { id: string, quantity: number }) => {
+                return sparseCart.map((item: any) => {
                     const storeItem = storeItems.find(s => s.id === item.id);
                     if (storeItem) {
                         return { ...storeItem, quantity: item.quantity };
+                    }
+                    // Fallback to persisted details if not in store
+                    if (item.title && item.price) {
+                        return { ...item, quantity: item.quantity };
                     }
                     return null;
                 }).filter(Boolean);
@@ -72,8 +78,10 @@ export default function CheckoutScreen() {
         setMenuItems(initialCart);
     }, [initialCart]);
 
-    const { addresses, activeAddressId } = useUiStore();
+    const { userId, selectedBranch, addresses, activeAddressId } = useUiStore();
     const activeAddress = addresses.find(a => a.id === activeAddressId) || (addresses.length > 0 ? addresses[0] : null);
+    const formattedActiveAddress = activeAddress ? formatAddressForDisplay(activeAddress) : '';
+    const formattedMainAddress = formattedActiveAddress.split('\n')[0]?.split(',')[0] || '';
 
     // 2. State for Address Modal, Payment, and Summary Collapse
     const [showDeliveryModal, setShowDeliveryModal] = useState(false);
@@ -99,13 +107,26 @@ export default function CheckoutScreen() {
     ];
 
     const updateQuantity = (id: string, delta: number) => {
-        setMenuItems(current =>
-            current.map(item =>
-                item.id === id
-                    ? { ...item, quantity: Math.max(1, item.quantity + delta) }
-                    : item
-            )
-        );
+        setMenuItems((current) => {
+            const next = current.map((item) => {
+                if (item.id !== id) {
+                    return item;
+                }
+                const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
+                const requested = Math.max(1, item.quantity + delta);
+                const clamped = Math.min(requested, maxQuantity);
+
+                if (requested > maxQuantity) {
+                    Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+                }
+
+                return {
+                    ...item,
+                    quantity: maxQuantity > 0 ? clamped : item.quantity,
+                };
+            });
+            return next;
+        });
     };
 
     const removeItem = (id: string) => {
@@ -132,6 +153,21 @@ export default function CheckoutScreen() {
             Alert.alert("Missing Information", "Please select a delivery address first.");
             return;
         }
+        if (!selectedBranch?.id) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert("Missing Information", "Please select a delivery branch first.");
+            return;
+        }
+
+        // Distance Validation
+        if (activeAddress?.latitude && activeAddress?.longitude && selectedBranch?.latitude && selectedBranch?.longitude) {
+            const distance = getDistanceKm(activeAddress.latitude, activeAddress.longitude, selectedBranch.latitude, selectedBranch.longitude);
+            if (selectedBranch.delivery_radius_km && distance > selectedBranch.delivery_radius_km) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                Alert.alert("Outside Delivery Range", `Sorry, your selected address is ${distance.toFixed(1)}km away, which is outside our ${selectedBranch.delivery_radius_km}km delivery radius.`);
+                return;
+            }
+        }
 
         if (!selectedMethod && selectedCategory !== 'Cash on Delivery') {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -144,13 +180,25 @@ export default function CheckoutScreen() {
             return;
         }
 
+        const hasExceededLocalStock = menuItems.some((item) => {
+            const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
+            return item.quantity > maxQuantity;
+        });
+
+        if (hasExceededLocalStock) {
+            Alert.alert("Maximum available quantity reached", "Maximum available quantity reached");
+            return;
+        }
+
         setIsSubmitting(true);
 
         // 2. Build payload for Laravel
         const orderPayload: OrderPayload = {
-            customer_name: activeAddress.fullAddress.split(',')[0] || 'Customer',
+            user_id: userId || undefined,
+            branch_id: selectedBranch.id,
+            customer_name: formattedMainAddress || 'Customer',
             mobile_number: userProfile?.contactNumber || '',
-            address: activeAddress.fullAddress,
+            address: formattedActiveAddress || activeAddress.fullAddress,
             items: menuItems.map(item => ({
                 product_id: parseInt(item.id, 10) || 0,
                 name: item.title,
@@ -164,6 +212,14 @@ export default function CheckoutScreen() {
         };
 
         try {
+            await validateCartStock({
+                branch_id: selectedBranch.id,
+                items: menuItems.map((item) => ({
+                    product_id: parseInt(item.id, 10) || 0,
+                    quantity: item.quantity,
+                })),
+            });
+
             // 3. Submit to Laravel backend
             const result = await submitOrder(orderPayload);
             console.log('[Checkout] Order submitted successfully:', result);
@@ -191,7 +247,7 @@ export default function CheckoutScreen() {
                 date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
                 deliveryTime: 'Today, ' + new Date(Date.now() + 45 * 60000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
                 paymentMethod: selectedCategory === 'Cash on Delivery' ? 'Cash on Delivery' : (selectedMethod || 'E-Wallet'),
-                fullAddress: activeAddress.fullAddress,
+                fullAddress: formattedActiveAddress || activeAddress.fullAddress,
                 itemsList: itemsList,
                 image: firstItem.image
             };
@@ -215,7 +271,7 @@ export default function CheckoutScreen() {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
             Alert.alert(
                 "Order Failed",
-                error?.response?.data?.message || "Could not place your order. Please check your connection and try again.",
+                error?.message || "Could not place your order. Please check your connection and try again.",
                 [{ text: "OK" }]
             );
         } finally {
@@ -342,13 +398,15 @@ export default function CheckoutScreen() {
                             <View style={styles.addressIconCircle}>
                                 <Ionicons name="location" size={18} color="#FF5800" />
                             </View>
-                            <View style={{ flex: 1 }}>
+                            <View style={styles.addressContent}>
                                 {activeAddress ? (
                                     <>
-                                        <Text style={styles.addressMainText} numberOfLines={1}>
-                                            {activeAddress.street || activeAddress.subdivision || activeAddress.fullAddress.split(',')[0]}
+                                        <Text style={styles.addressMainText} numberOfLines={2}>
+                                            {formattedMainAddress || 'Delivery Address'}
                                         </Text>
-                                        <Text style={styles.addressSubText} numberOfLines={1}>{activeAddress.fullAddress}</Text>
+                                        <Text style={styles.addressSubText} numberOfLines={3}>
+                                            {formattedActiveAddress || activeAddress.fullAddress}
+                                        </Text>
                                     </>
                                 ) : (
                                     <Text style={styles.addressMainText}>Choose delivery address</Text>
@@ -635,7 +693,7 @@ const styles = StyleSheet.create({
     },
     addressBox: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'space-between',
         paddingBottom: 10,
         borderBottomWidth: 1,
@@ -646,6 +704,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         flex: 1,
         marginRight: 10,
+        minWidth: 0,
+    },
+    addressContent: {
+        flex: 1,
+        minWidth: 0,
+        flexShrink: 1,
     },
     addressIconCircle: {
         width: 32,
@@ -664,6 +728,7 @@ const styles = StyleSheet.create({
     },
     editBtn: {
         padding: 6,
+        alignSelf: 'flex-start',
     },
     sectionHeaderRow: {
         flexDirection: 'row',
@@ -686,6 +751,8 @@ const styles = StyleSheet.create({
     addressSubText: {
         fontSize: 12,
         color: '#6B7280',
+        lineHeight: 17,
+        flexShrink: 1,
     },
     addAddressBtn: {
         flexDirection: 'row',

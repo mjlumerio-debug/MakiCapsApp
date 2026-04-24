@@ -1,0 +1,21 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "barangay",
+    "makicaps",
+    "makidesuoperation",
+    "reverb",
+    "sublocality",
+    "paymaya",
+    "gcash",
+    "gyeongsan",
+    "dongboo"
+  ],
+  "ignorePaths": [
+    "node_modules/**",
+    ".expo/**",
+    "android/**"
+  ]
+}
+

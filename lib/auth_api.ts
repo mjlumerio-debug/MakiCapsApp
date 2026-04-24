@@ -38,6 +38,33 @@ type VerifyEmailCodeResponse = {
   firstName?: string | null;
 };
 
+const mapAuthUser = (user: any, emailFallback = ''): AuthUser => ({
+  id: user?.id || 0,
+  firstName: user?.first_name || user?.firstName || user?.name?.split(' ')?.[0] || '',
+  lastName: user?.last_name || user?.lastName || user?.name?.split(' ')?.slice(1).join(' ') || '',
+  email: user?.email || emailFallback,
+  contactNumber: user?.mobile_number || user?.contact_number || user?.contactNumber || '',
+});
+
+export const fetchCurrentUser = async (): Promise<AuthUser> => {
+  try {
+    const response = await api.get('/user');
+    const data = response.data;
+    // Handle nested user object if present (Laravel usually returns { user: {...} } or just {...})
+    const userData = data.user || data;
+    return mapAuthUser(userData);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      const msg = error.response.data?.message || error.response.data?.error || 'Failed to fetch user profile.';
+      throw new Error(msg);
+    }
+    if (axios.isAxiosError(error) && !error.response) {
+      throw new Error('Network error while fetching user profile.');
+    }
+    throw new Error('An unexpected error occurred while fetching user profile.');
+  }
+};
+
 export const signupUser = async (payload: SignupPayload): Promise<AuthUser> => {
   try {
     const response = await api.post('/register', {
@@ -88,13 +115,12 @@ export const loginUser = async (payload: LoginPayload): Promise<AuthUser> => {
       await AsyncStorage.setItem('auth_token', token);
     }
 
-    return {
-      id: user.id || 0,
-      firstName: user.first_name || '',
-      lastName: user.last_name || '',
-      email: user.email || payload.email,
-      contactNumber: user.mobile_number || '',
-    };
+    try {
+      return await fetchCurrentUser();
+    } catch (fetchUserError) {
+      console.error('Login succeeded but /user fetch failed, using login payload user.', fetchUserError);
+      return mapAuthUser(user, payload.email);
+    }
   } catch (error) {
     if (axios.isAxiosError(error) && error.response) {
       const status = error.response.status;

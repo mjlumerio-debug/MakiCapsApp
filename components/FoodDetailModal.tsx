@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
 import {
+    Alert,
     Dimensions,
     Modal,
     SafeAreaView,
@@ -53,6 +54,7 @@ export default function FoodDetailModal({
     const flyScale = useSharedValue(0);
     const flyOpacity = useSharedValue(0);
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (visible) {
             setQuantity(1);
@@ -110,6 +112,15 @@ export default function FoodDetailModal({
 
     const handleAddToCart = () => {
         if (!item) return;
+        const maxQuantity = Number(item.max_quantity ?? item.stock ?? 0);
+        if (maxQuantity <= 0) {
+            Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+            return;
+        }
+        if (quantity > maxQuantity) {
+            Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+            return;
+        }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onAddToCart(item, quantity);
 
@@ -128,6 +139,8 @@ export default function FoodDetailModal({
 
 
     if (!item) return null;
+    const stockCount = Number(item.max_quantity ?? item.stock ?? 0);
+    const isAvailable = stockCount > 0;
 
     return (
         <Modal
@@ -176,6 +189,11 @@ export default function FoodDetailModal({
                                         <Text style={styles.fromLabel}>From: </Text>
                                         <Text style={styles.priceValue}>{item.price}</Text>
                                     </View>
+                                    {!isAvailable ? (
+                                        <Text style={[styles.stockStatusText, styles.stockUnavailable]}>
+                                            Out of Stock
+                                        </Text>
+                                    ) : null}
                                 </View>
 
                                 <TouchableOpacity
@@ -246,14 +264,24 @@ export default function FoodDetailModal({
                                         <Text style={styles.qtyValue}>{quantity.toString().padStart(2, '0')}</Text>
                                         <TouchableOpacity
                                             style={styles.qtyBtnAdd}
-                                            onPress={() => setQuantity(quantity + 1)}
+                                            onPress={() => {
+                                                if (quantity >= stockCount) {
+                                                    Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+                                                    return;
+                                                }
+                                                setQuantity(quantity + 1);
+                                            }}
                                         >
                                             <Ionicons name="add" size={20} color="#FFF" />
                                         </TouchableOpacity>
                                     </View>
 
-                                    <TouchableOpacity style={styles.atcActionBtn} onPress={handleAddToCart}>
-                                        <Text style={styles.atcBtnText}>Add to Cart</Text>
+                                    <TouchableOpacity
+                                        style={[styles.atcActionBtn, !isAvailable && styles.atcActionBtnDisabled]}
+                                        onPress={handleAddToCart}
+                                        disabled={!isAvailable}
+                                    >
+                                        <Text style={styles.atcBtnText}>{isAvailable ? 'Add to Cart' : 'Out of Stock'}</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -384,6 +412,17 @@ const styles = StyleSheet.create({
         color: '#FF5800',
         fontWeight: '700',
     },
+    stockStatusText: {
+        marginTop: 8,
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    stockAvailable: {
+        color: '#4CAF50',
+    },
+    stockUnavailable: {
+        color: '#FF6B6B',
+    },
     descriptionContainer: {
         marginTop: 20,
         alignItems: 'flex-start',
@@ -478,6 +517,11 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.3,
         shadowRadius: 10,
         elevation: 5,
+    },
+    atcActionBtnDisabled: {
+        backgroundColor: '#555',
+        shadowOpacity: 0,
+        elevation: 0,
     },
     atcBtnText: {
         color: '#FFF',

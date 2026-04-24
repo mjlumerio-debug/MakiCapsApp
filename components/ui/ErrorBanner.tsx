@@ -35,6 +35,7 @@ export const ErrorBanner: React.FC<ErrorBannerProps> = ({
         transform: [{ translateX: shake.value }],
     }));
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (message) {
             shake.value = withSequence(

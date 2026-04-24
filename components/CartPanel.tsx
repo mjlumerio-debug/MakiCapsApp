@@ -1,8 +1,9 @@
 import { useMenuStore } from '@/lib/menu_store';
-import { clearCart, setCartCollapsed, toggleAllCartCheck, toggleCartCheck, updateCartQuantity, useUiStore, removeCheckedFromCart } from '@/lib/ui_store';
+import { clearCart, setCartCollapsed, toggleAllCartCheck, toggleCartCheck, updateCartQuantity, useUiStore } from '@/lib/ui_store';
+import { getDistanceKm } from '@/lib/google_location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
-import { FlatList, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useDerivedValue, withTiming } from 'react-native-reanimated';
 
 type CartPanelProps = {
@@ -10,10 +11,10 @@ type CartPanelProps = {
     onCheckout: () => void;
 };
 
-const DELIVERY_FEE = 38.00;
-
 function CartItemRow({ item, food }: { item: any; food: any }) {
-    if (!food) return null;
+    const displayFood = food || item;
+    if (!displayFood?.title) return null;
+    const maxQuantity = Number(displayFood.max_quantity ?? displayFood.stock ?? 0);
 
     return (
         <View style={styles.itemCard}>
@@ -28,18 +29,18 @@ function CartItemRow({ item, food }: { item: any; food: any }) {
                 />
             </TouchableOpacity>
 
-            <Image source={food.image} style={styles.itemImage} resizeMode="cover" />
+            <Image source={displayFood.image} style={styles.itemImage} resizeMode="cover" />
 
             <View style={styles.itemInfo}>
                 <View>
-                    <Text style={styles.itemTitle} numberOfLines={1}>{food.title}</Text>
+                    <Text style={styles.itemTitle} numberOfLines={1}>{displayFood.title}</Text>
                     <Text style={styles.itemDescription} numberOfLines={1}>
-                        {food.description || 'Fresh ingredients'}
+                        {displayFood.description || 'Fresh ingredients'}
                     </Text>
                 </View>
 
                 <View style={styles.itemFooter}>
-                    <Text style={styles.itemPrice}>{food.price}</Text>
+                    <Text style={styles.itemPrice}>{displayFood.price}</Text>
 
                     <View style={styles.qtyRow}>
                         <TouchableOpacity
@@ -51,7 +52,12 @@ function CartItemRow({ item, food }: { item: any; food: any }) {
                         <Text style={styles.qtyText}>{item.quantity.toString().padStart(2, '0')}</Text>
                         <TouchableOpacity
                             style={styles.qtyBtnPlus}
-                            onPress={() => updateCartQuantity(item.id, item.quantity + 1)}
+                            onPress={() => {
+                                const result = updateCartQuantity(item.id, item.quantity + 1, maxQuantity);
+                                if (!result.ok) {
+                                    Alert.alert('Maximum available quantity reached', result.message || 'Maximum available quantity reached');
+                                }
+                            }}
                         >
                             <Ionicons name="add" size={14} color="#FFF" />
                         </TouchableOpacity>
@@ -63,20 +69,38 @@ function CartItemRow({ item, food }: { item: any; food: any }) {
 }
 
 export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps) {
-    const { cartItems, isCartCollapsed } = useUiStore();
+    const { cartItems, isCartCollapsed, addresses, activeAddressId, selectedBranch } = useUiStore();
     const { menuItems } = useMenuStore();
     const [showClearCartModal, setShowClearCartModal] = useState(false);
 
     const checkedItems = useMemo(() => cartItems.filter(item => item.checked), [cartItems]);
     const allChecked = cartItems.length > 0 && checkedItems.length === cartItems.length;
 
+    const activeAddress = useMemo(
+        () => addresses.find((a) => a.id === activeAddressId),
+        [addresses, activeAddressId]
+    );
+
+    const distanceToBranch = useMemo(() => {
+        if (!selectedBranch || !activeAddress?.latitude || !activeAddress?.longitude || !selectedBranch.latitude || !selectedBranch.longitude) return null;
+        return getDistanceKm(
+            activeAddress.latitude,
+            activeAddress.longitude,
+            selectedBranch.latitude,
+            selectedBranch.longitude
+        );
+    }, [selectedBranch, activeAddress]);
+
+    const isOutsideRadius = useMemo(() => {
+        if (distanceToBranch === null || !selectedBranch?.delivery_radius_km) return false;
+        return distanceToBranch > selectedBranch.delivery_radius_km;
+    }, [distanceToBranch, selectedBranch]);
 
     const subTotal = useMemo(() => {
         return checkedItems.reduce((acc, item) => {
-            const food = menuItems.find(f => f.id === item.id);
-            if (!food) return acc;
-            // Handle both $ and ₱ symbols in price string
-            const price = parseFloat(food.price.replace(/[^\d.]/g, ''));
+            const food = menuItems.find(f => f.id === item.id) || item;
+            if (!food?.price) return acc;
+            const price = parseFloat(String(food.price).replace(/[^\d.]/g, ''));
             return acc + (price * item.quantity);
         }, 0);
     }, [checkedItems, menuItems]);
@@ -96,7 +120,6 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
         };
     });
 
-    // Smooth padding transition for the list
     const paddingBottomAnim = useDerivedValue(() => {
         return withTiming(isCartCollapsed ? 0 : bottomPadding + 240, {
             duration: 350,
@@ -172,20 +195,25 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
 
                         <View style={styles.summaryContent}>
                             <View style={styles.horizontalFooterBar}>
-                                {/* Left: Total */}
                                 <View>
                                     <Text style={styles.totalCountText}>Total ({checkedItems.length} {checkedItems.length === 1 ? 'item' : 'items'})</Text>
                                     <Text style={styles.totalPriceText}>₱{total.toFixed(2).split('.')[0]}<Text style={styles.decimalText}>.{total.toFixed(2).split('.')[1]}</Text></Text>
                                 </View>
 
-                                {/* Right: Check Out button */}
-                                <TouchableOpacity
-                                    style={[styles.checkoutBtnSmall, checkedItems.length === 0 && styles.disabledBtn]}
-                                    onPress={onCheckout}
-                                    disabled={checkedItems.length === 0}
-                                >
-                                    <Text style={styles.checkoutBtnText}>Check Out</Text>
-                                </TouchableOpacity>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                    {(isOutsideRadius || !activeAddress) && (
+                                        <Text style={styles.outsideWarning}>
+                                            {!activeAddress ? 'Set address to order' : 'Out of delivery range'}
+                                        </Text>
+                                    )}
+                                    <TouchableOpacity
+                                        style={[styles.checkoutBtnSmall, (checkedItems.length === 0 || isOutsideRadius || !activeAddress) && styles.disabledBtn]}
+                                        onPress={onCheckout}
+                                        disabled={checkedItems.length === 0 || isOutsideRadius || !activeAddress}
+                                    >
+                                        <Text style={styles.checkoutBtnText}>Check Out</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
                             <View style={styles.footerDivider} />
                             <View style={styles.footerNote}>
@@ -197,7 +225,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
 
                     {isCartCollapsed && (
                         <TouchableOpacity
-                            style={[styles.maximizeBtn, { bottom: 85 }]}
+                            style={[styles.maximizeBtn, { bottom: bottomPadding + 10 }]}
                             onPress={() => setCartCollapsed(false)}
                             activeOpacity={0.8}
                         >
@@ -209,7 +237,6 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                 </>
             )}
 
-            {/* Cozy Clear Cart Modal */}
             <Modal transparent visible={showClearCartModal} animationType="fade">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
@@ -372,7 +399,6 @@ const styles = StyleSheet.create({
         backgroundColor: '#FFFFFF',
         borderTopLeftRadius: 40,
         borderTopRightRadius: 40,
-        // Height will be determined by content + paddingBottom
         shadowColor: '#000',
         shadowOpacity: 0.1,
         shadowOffset: { width: 0, height: -10 },
@@ -436,22 +462,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingVertical: 4,
     },
-    deleteActionBtn: {
-        paddingBottom: 4,
-    },
-    deleteText: {
-        fontSize: 13,
-        color: '#4B5563',
-        fontWeight: '500',
-    },
-    footerRightArea: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 15,
-    },
-    totalInfoArea: {
-        alignItems: 'flex-end',
-    },
     totalCountText: {
         fontSize: 14,
         color: '#6B7280',
@@ -487,9 +497,6 @@ const styles = StyleSheet.create({
         backgroundColor: '#E5E7EB',
         shadowOpacity: 0,
         elevation: 0,
-    },
-    disabledText: {
-        color: '#D1D5DB',
     },
     emptyState: {
         marginTop: 60,
@@ -582,5 +589,12 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         color: '#FFFFFF',
+    },
+    outsideWarning: {
+        fontSize: 10,
+        color: '#FF5252',
+        fontWeight: '700',
+        marginBottom: 4,
+        textTransform: 'uppercase',
     }
 });

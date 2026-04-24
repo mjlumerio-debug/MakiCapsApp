@@ -19,7 +19,7 @@ import * as Haptics from 'expo-haptics';
 import { fetchOrderStatus, type OrderStatusResponse } from '../lib/order_api';
 import { useUiStore, updateOrderStatus } from '../lib/ui_store';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 const PRIMARY_ORANGE = '#FF5800';
 
 // ─── Status Pipeline ───────────────────────────────────────────
@@ -44,6 +44,26 @@ function getStepIndex(status: string): number {
     return STEPS.findIndex(s => s.key === step);
 }
 
+const moneyText = (value?: string | number): string => {
+    if (value === null || value === undefined) return '\u20B10.00';
+    if (typeof value === 'number') return `\u20B1${value.toFixed(2)}`;
+    const numeric = Number(String(value).replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(numeric)) {
+        return String(value).replace(/â‚±/g, '\u20B1');
+    }
+    return `\u20B1${numeric.toFixed(2)}`;
+};
+
+const normalizePaymentMethod = (value?: string): string => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return 'Cash on Delivery';
+    if (raw === 'cod' || raw.includes('cash on delivery')) return 'Cash on Delivery';
+    if (raw.includes('gcash')) return 'GCash';
+    if (raw.includes('maya') || raw.includes('paymaya')) return 'Maya';
+    if (raw === 'e-wallet' || raw === 'ewallet') return 'E-Wallet';
+    return value || 'Cash on Delivery';
+};
+
 // ─── Step Icon Renderer ────────────────────────────────────────
 function StepIcon({ step, isActive, isCompleted }: { step: typeof STEPS[0]; isActive: boolean; isCompleted: boolean }) {
     const color = isCompleted ? '#FFFFFF' : isActive ? '#FFFFFF' : '#D1D5DB';
@@ -57,6 +77,7 @@ function StepIcon({ step, isActive, isCompleted }: { step: typeof STEPS[0]; isAc
 function PulseDot() {
     const pulseAnim = useRef(new Animated.Value(1)).current;
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         Animated.loop(
             Animated.sequence([
@@ -76,6 +97,7 @@ function DeliveredCelebration({ onDismiss }: { onDismiss: () => void }) {
     const scaleAnim = useRef(new Animated.Value(0)).current;
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         Animated.parallel([
             Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 80, useNativeDriver: true }),
@@ -114,10 +136,16 @@ export default function TrackOrderScreen() {
     const orderId = params.orderId || '—';
     const totalPrice = params.totalPrice || '₱0.00';
 
-    const { orders } = useUiStore();
+    const { orders, addresses, activeAddressId } = useUiStore();
 
     // Find the local order record for extra details
     const localOrder = orders.find(o => o.orderId === orderId || o.backendOrderId === backendOrderId);
+    const activeAddress = addresses.find((a) => a.id === activeAddressId) || addresses[0];
+    const resolvedAddress =
+        localOrder?.fullAddress && localOrder.fullAddress !== 'Stored Address'
+            ? localOrder.fullAddress
+            : (activeAddress?.fullAddress || 'No delivery address selected');
+    const resolvedPaymentMethod = normalizePaymentMethod(localOrder?.paymentMethod);
 
     const [currentStatus, setCurrentStatus] = useState<OrderStep>('pending');
     const [isLoading, setIsLoading] = useState(true);
@@ -130,6 +158,7 @@ export default function TrackOrderScreen() {
     const headerFadeAnim = useRef(new Animated.Value(0)).current;
 
     // ── Entrance animation ──
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         Animated.timing(headerFadeAnim, {
             toValue: 1,
@@ -140,6 +169,7 @@ export default function TrackOrderScreen() {
     }, []);
 
     // ── Animate progress bar ──
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     const animateProgress = useCallback((stepIdx: number) => {
         const target = stepIdx / (STEPS.length - 1);
         Animated.timing(progressAnim, {
@@ -151,6 +181,7 @@ export default function TrackOrderScreen() {
     }, []);
 
     // ── Fetch status from backend ──
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     const fetchStatus = useCallback(async () => {
         if (!backendOrderId) {
             setIsLoading(false);
@@ -192,6 +223,7 @@ export default function TrackOrderScreen() {
     }, [backendOrderId, localOrder]);
 
     // ── Start polling ──
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         fetchStatus(); // Initial fetch
 
@@ -387,26 +419,26 @@ export default function TrackOrderScreen() {
 
                         <View style={styles.summaryRow}>
                             <Text style={styles.summaryLabel}>Subtotal</Text>
-                            <Text style={styles.summaryValue}>{localOrder.subtotal}</Text>
+                            <Text style={styles.summaryValue}>{moneyText(localOrder.subtotal)}</Text>
                         </View>
                         <View style={styles.summaryRow}>
                             <Text style={styles.summaryLabel}>Delivery Fee</Text>
-                            <Text style={styles.summaryValue}>{localOrder.deliveryFee}</Text>
+                            <Text style={styles.summaryValue}>{moneyText(localOrder.deliveryFee)}</Text>
                         </View>
                         <View style={[styles.summaryRow, { marginTop: 8 }]}>
                             <Text style={styles.summaryTotalLabel}>Total</Text>
-                            <Text style={styles.summaryTotalValue}>{localOrder.totalPrice}</Text>
+                            <Text style={styles.summaryTotalValue}>{moneyText(localOrder.totalPrice || totalPrice)}</Text>
                         </View>
 
                         {/* Address & Payment */}
                         <View style={styles.summaryDivider} />
                         <View style={styles.detailRow}>
                             <Feather name="map-pin" size={14} color="#9CA3AF" />
-                            <Text style={styles.detailText} numberOfLines={2}>{localOrder.fullAddress}</Text>
+                            <Text style={styles.detailText} numberOfLines={2}>{resolvedAddress}</Text>
                         </View>
                         <View style={[styles.detailRow, { marginTop: 8 }]}>
                             <Feather name="credit-card" size={14} color="#9CA3AF" />
-                            <Text style={styles.detailText}>{localOrder.paymentMethod}</Text>
+                            <Text style={styles.detailText}>{resolvedPaymentMethod}</Text>
                         </View>
                     </View>
                 )}
