@@ -30,9 +30,12 @@ export type OrderPayload = {
 
 export type CartValidationPayload = {
   branch_id: number;
+  user_id?: number;
   items: {
     product_id: number;
+    name?: string;
     quantity: number;
+    price?: number;
   }[];
 };
 
@@ -59,6 +62,7 @@ export const submitOrder = async (
   payload: OrderPayload
 ): Promise<{ order_id: number; status: string }> => {
   try {
+    console.log('[OrderAPI] Submitting order with payload:', JSON.stringify(payload, null, 2));
     const response = await api.post(apiRoutes.orders, payload);
     const data = response.data;
     const order = data?.data || data;
@@ -132,14 +136,29 @@ export const validateCartStock = async (
   payload: CartValidationPayload
 ): Promise<{ message: string }> => {
   try {
+    console.log('[OrderAPI] Validating stock with payload:', JSON.stringify(payload, null, 2));
     const response = await api.post(apiRoutes.validateCart, payload);
     return {
       message: response?.data?.message || 'Cart valid',
     };
   } catch (error: any) {
-    console.log('[OrderAPI] validateCartStock failed:', error?.response?.data || error?.message);
-    // Surface the real backend message so the user knows what's wrong
-    const serverMsg = error?.response?.data?.message || error?.response?.data?.error;
-    throw new Error(serverMsg || 'Some items in your cart exceed available stock. Please adjust quantities.');
+    const status = error?.response?.status;
+    const serverData = error?.response?.data;
+    
+    console.log('[OrderAPI] validateCartStock failed:', {
+        status,
+        data: serverData,
+        message: error?.message
+    });
+
+    // 🛑 HARD STOP: Surface the real backend error and prevent submission
+    let errorMsg = error?.response?.data?.message || error?.response?.data?.error || error?.message || 'Validation failed. Please try again.';
+    
+    // If the server says "Server Error" (generic 500), make it clearer
+    if (errorMsg === 'Server Error') {
+        errorMsg = 'Server Error: The backend crashed during validation. Please check your Laravel logs.';
+    }
+
+    throw new Error(errorMsg);
   }
 };

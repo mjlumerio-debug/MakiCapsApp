@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import { AuthUser } from './auth_api';
 import { useSyncExternalStore } from 'react';
 import { getDistanceKm } from './google_location';
 
@@ -80,7 +82,9 @@ type UiState = {
   selectedBranch: SelectedBranch | null;
   orderMode: 'delivery' | 'pickup';
   isLocationLoading: boolean;
+  user: AuthUser | null;
   sessionStatus: 'idle' | 'validating' | 'authorized' | 'expired' | 'unauthorized';
+  riderStatus: 'available' | 'busy' | 'offline';
 };
 
 const initialState: UiState = {
@@ -94,7 +98,9 @@ const initialState: UiState = {
   selectedBranch: null,
   orderMode: 'delivery',
   isLocationLoading: false,
+  user: null,
   sessionStatus: 'idle',
+  riderStatus: 'offline',
 };
 
 const STORAGE_KEY_FAVORITES = 'maki_favorites';
@@ -131,15 +137,52 @@ export const setUserId = (userId: number | null): void => {
   }
 };
 
+export const setUser = (user: AuthUser | null): void => {
+  setState((prev) => ({ ...prev, user }));
+};
+
+export const hydrateSession = async (): Promise<void> => {
+    const token = await SecureStore.getItemAsync('auth_token');
+    const cachedProfile = await AsyncStorage.getItem('user_profile');
+    
+    if (token) {
+      if (cachedProfile) {
+        setState(prev => ({ 
+          ...prev, 
+          sessionStatus: 'authorized', 
+          user: JSON.parse(cachedProfile) 
+        }));
+      } else {
+        setState((prev) => ({ ...prev, sessionStatus: 'authorized' }));
+      }
+    } else {
+      setState((prev) => ({ ...prev, sessionStatus: 'unauthorized' }));
+    }
+};
+
 export const setSessionStatus = (status: UiState['sessionStatus']): void => {
   setState((prev) => ({ ...prev, sessionStatus: status }));
 };
 
+export const setRiderStatus = (status: UiState['riderStatus']): void => {
+  setState((prev) => ({ ...prev, riderStatus: status }));
+};
+
 export const logoutUser = async (): Promise<void> => {
+  // Attempt to notify backend to destroy token and set offline status
+  try {
+    const api = (await import('./api')).default;
+    await api.post('logout');
+  } catch (error) {
+    console.debug('[Logout] Could not sync logout to backend', error);
+  }
+
   // Clear all auth-related storage
   await Promise.all([
-    AsyncStorage.removeItem('auth_token'),
+    SecureStore.deleteItemAsync('auth_token'),
     AsyncStorage.removeItem('current_user_id'),
+    AsyncStorage.removeItem('user_profile'),
+    AsyncStorage.removeItem('user_role'),
     AsyncStorage.removeItem(STORAGE_KEY_CART),
     AsyncStorage.removeItem(STORAGE_KEY_ACTIVE_ADDRESS_ID),
   ]);
@@ -148,6 +191,7 @@ export const logoutUser = async (): Promise<void> => {
   setState((prev) => ({
     ...initialState,
     sessionStatus: 'unauthorized',
+    riderStatus: 'offline', // Enforce offline upon logout
   }));
 };
 

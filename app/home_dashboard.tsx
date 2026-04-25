@@ -15,6 +15,7 @@ import { useCart } from '@/state/contexts/CartContext';
 import { useLocation } from '@/state/contexts/LocationContext';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { RiderStatusPanel } from '@/components/RiderStatusPanel';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -461,6 +462,7 @@ export default function HomeDashboard() {
 
       {activeTab === 'home' && (
         <View style={styles.header}>
+          <RiderStatusPanel />
           <TouchableOpacity
             activeOpacity={0.8}
             style={[styles.locationContainer, { backgroundColor: colors.surface }]}

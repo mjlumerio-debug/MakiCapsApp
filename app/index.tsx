@@ -16,9 +16,11 @@ export default function OnboardingScreen() {
       try {
         const { fetchCurrentUser, refreshToken } = await import('@/lib/auth_api');
         const { setUserId, setSessionStatus } = await import('@/lib/ui_store');
+        const { suppressAutoLogout } = await import('@/lib/api');
+        const SecureStore = await import('expo-secure-store');
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         
-        const token = await AsyncStorage.getItem('auth_token');
+        const token = await SecureStore.getItemAsync('auth_token');
         if (!token) {
           setIsChecking(false);
           return;
@@ -26,11 +28,22 @@ export default function OnboardingScreen() {
 
         setSessionStatus('validating');
         
+        // Suppress the 401 interceptor during startup validation
+        // so stale tokens don't trigger "Session Expired" alerts
+        suppressAutoLogout(true);
+        
         try {
           // Try to validate the current token
           const user = await fetchCurrentUser();
+          suppressAutoLogout(false);
           setUserId(user.id);
-          router.replace('/home_dashboard');
+
+          // Route based on role
+          if (user.role === 'rider') {
+            router.replace('/rider/dashboard' as any);
+          } else {
+            router.replace('/home_dashboard');
+          }
         } catch (fetchError) {
           // Token might be stale — try refreshing it
           console.log('[SessionCheck] Initial validation failed, attempting token refresh...');
@@ -40,21 +53,35 @@ export default function OnboardingScreen() {
             // Retry with the new token
             try {
               const user = await fetchCurrentUser();
+              suppressAutoLogout(false);
               setUserId(user.id);
               console.log('[SessionCheck] Token refreshed and session restored.');
-              router.replace('/home_dashboard');
+              
+              if (user.role === 'rider') {
+                router.replace('/rider/dashboard' as any);
+              } else {
+                router.replace('/home_dashboard');
+              }
               return;
             } catch {
               // Even after refresh, still fails
             }
           }
           
-          // Token is truly dead — clean up
+          // Token is truly dead — clean up quietly (no "Session Expired" alert)
+          suppressAutoLogout(false);
           console.log('[SessionCheck] Token is invalid. Clearing session.');
-          await AsyncStorage.removeItem('auth_token');
+          await SecureStore.deleteItemAsync('auth_token');
+          await AsyncStorage.removeItem('user_profile');
+          setSessionStatus('idle');
           setIsChecking(false);
         }
       } catch (e) {
+        // Ensure suppression is cleared on unexpected errors
+        try {
+          const { suppressAutoLogout } = await import('@/lib/api');
+          suppressAutoLogout(false);
+        } catch {}
         console.log('[SessionCheck] Unexpected error:', e);
         setIsChecking(false);
       }

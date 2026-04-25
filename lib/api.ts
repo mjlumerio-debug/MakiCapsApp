@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
 import { logoutUser, setSessionStatus } from './ui_store';
 
@@ -11,23 +12,38 @@ const api = axios.create({
   headers: {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
-    'X-Requested-With': 'XMLHttpRequest',
   },
-  // withCredentials: true, // Disabled to check if CORS is blocking credentials
   timeout: 30000,
 });
+
+/**
+ * Get auth token from SecureStore
+ */
+export const getAuthToken = async () => {
+  try {
+    const token = await SecureStore.getItemAsync('auth_token');
+    return token ? token.trim() : null; // Ensure no whitespace
+  } catch (error) {
+    console.error('[SecureStore] Failed to get auth_token:', error);
+    return null;
+  }
+};
 
 // Add a request interceptor to attach the auth token
 api.interceptors.request.use(
   async (config) => {
     try {
-      const token = await AsyncStorage.getItem('auth_token');
-      // Skip token for auth endpoints
+      const token = await getAuthToken();
       const isAuthEndpoint = config.url?.includes('login') || config.url?.includes('register');
       
-      if (token && !isAuthEndpoint) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
+        if (token && !isAuthEndpoint) {
+          if (config.headers) {
+            config.headers['Authorization'] = `Bearer ${token}`;
+          }
+          console.log(`[API-OUT] ${config.method?.toUpperCase()} ${config.url} (Token: Attached)`);
+        } else if (!isAuthEndpoint) {
+          console.warn(`[API-WARN] ${config.method?.toUpperCase()} ${config.url} (Token: MISSING)`);
+        }
     } catch (error) {
       console.error('[API Interceptor] Failed to get auth token:', error);
     }
@@ -40,6 +56,16 @@ api.interceptors.request.use(
 
 // Add a response interceptor to handle session expiration (401)
 let isLoggingOut = false; // Prevent multiple simultaneous logout attempts
+let interceptorSuppressed = false; // Suppresses auto-logout during session validation
+
+/**
+ * Temporarily suppress the 401 auto-logout interceptor.
+ * Use this during startup session checks so stale tokens
+ * don't trigger the "Session Expired" alert.
+ */
+export const suppressAutoLogout = (suppress: boolean): void => {
+  interceptorSuppressed = suppress;
+};
 
 api.interceptors.response.use(
   (response) => response,
@@ -51,8 +77,18 @@ api.interceptors.response.use(
       // Skip logout logic for auth endpoints (login/register should handle their own errors)
       const isAuthEndpoint = requestUrl.includes('login') || requestUrl.includes('register');
 
+      // Skip if interceptor is suppressed (during startup session validation)
+      const isSuppressed = interceptorSuppressed;
+
       // 401 Unauthorized - Session expired or invalid token
-      if (status === 401 && !isAuthEndpoint && !isLoggingOut) {
+      if (status === 401 && !isAuthEndpoint && !isLoggingOut && !isSuppressed) {
+        // 🚨 CRITICAL: Skip auto-logout for profile and rider routes.
+        // This prevents the "Session Expired" loop if the backend is misconfigured.
+        if (requestUrl.includes('user') || requestUrl.includes('rider')) {
+          console.warn(`[API] 401 on ${requestUrl} suppressed to prevent logout loop.`);
+          return Promise.reject(error);
+        }
+
         console.warn('[API] 401 received. Token may be expired.');
         
         isLoggingOut = true;

@@ -274,10 +274,12 @@ export default function CheckoutScreen() {
         setIsSubmitting(true);
 
         // 2. Build payload for Laravel
+        const fullName = userProfile ? `${userProfile.firstName} ${userProfile.lastName}`.trim() : 'Customer';
+        
         const orderPayload: OrderPayload = {
             user_id: userId || undefined,
             branch_id: selectedBranch.id,
-            customer_name: formattedMainAddress || 'Customer',
+            customer_name: fullName,
             mobile_number: userProfile?.contactNumber || '',
             address: formattedActiveAddress || activeAddress.fullAddress,
             items: menuItems.map(item => ({
@@ -294,12 +296,19 @@ export default function CheckoutScreen() {
 
         try {
             await validateCartStock({
-                branch_id: selectedBranch.id,
+                branch_id: Number(selectedBranch.id),
+                user_id: userId || undefined,
                 items: menuItems.map((item) => ({
                     product_id: parseInt(item.id, 10) || 0,
+                    name: item.title,
                     quantity: item.quantity,
+                    price: typeof item.price === 'string'
+                        ? parseFloat(item.price.replace(/[^\d.]/g, ''))
+                        : item.price,
                 })),
             });
+
+            console.log('[Checkout] Submitting order payload:', JSON.stringify(orderPayload, null, 2));
 
             // 3. Submit to Laravel backend
             const result = await submitOrder(orderPayload);

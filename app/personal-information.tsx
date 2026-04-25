@@ -1,13 +1,20 @@
-import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { Typography } from '@/constants/theme';
+import { fetchCurrentUser, updateUserProfile } from '@/lib/auth_api';
+import { useUiStore } from '@/lib/ui_store';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
-import { updateUserProfile, fetchCurrentUser } from '@/lib/auth_api';
 import {
+    ActivityIndicator,
+    Alert,
     Image,
     KeyboardAvoidingView,
+    Modal,
+    NativeModules,
     Platform,
-    ActivityIndicator,
     Animated as RNAnimated,
     Easing as RNEasing,
     ScrollView,
@@ -15,15 +22,9 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
-    View,
-    Modal,
-    Alert,
-    NativeModules
+    View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '@/state/contexts/ThemeContext';
-import { StatusBar } from 'expo-status-bar';
-import { Typography } from '@/constants/theme';
 
 const { StatusBarManager } = NativeModules;
 const STATUSBAR_HEIGHT = Platform.OS === 'ios' ? 20 : (StatusBarManager?.HEIGHT || 0);
@@ -32,6 +33,7 @@ export default function PersonalInformationScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { colors, isDark } = useAppTheme();
+    const { user } = useUiStore();
 
     const [fullName, setFullName] = useState('');
     const [email, setEmail] = useState('');
@@ -51,7 +53,7 @@ export default function PersonalInformationScreen() {
     const [tempFirstName, setTempFirstName] = useState('');
     const [tempLastName, setTempLastName] = useState('');
     const [tempPhone, setTempPhone] = useState('');
-    
+
     // Validation states
     const [phoneError, setPhoneError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -66,32 +68,34 @@ export default function PersonalInformationScreen() {
     useEffect(() => {
         const loadUserProfile = async () => {
             try {
-                // Try fetching fresh data from backend first
-                let profile;
-                try {
-                    console.log('[PersonalInformation] Fetching fresh profile from backend...');
-                    profile = await fetchCurrentUser();
-                    console.log('[PersonalInformation] Profile fetched successfully:', profile);
-                    // Update AsyncStorage with fresh data
-                    await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
-                } catch (apiError) {
-                    console.warn('[PersonalInformation] Backend fetch failed, falling back to local storage:', apiError);
-                    const profileJson = await AsyncStorage.getItem('user_profile');
-                    if (profileJson) {
-                        profile = JSON.parse(profileJson);
+                // 1. Try Global Store first (fastest)
+                let profile: any = user;
+
+                // 2. Try AsyncStorage if store is empty
+                if (!profile) {
+                    const cached = await AsyncStorage.getItem('user_profile');
+                    if (cached) profile = JSON.parse(cached);
+                }
+
+                // 3. Last resort: API (This might 500, but we have backups now)
+                if (!profile) {
+                    try {
+                        profile = await fetchCurrentUser();
+                    } catch (apiError) {
+                        console.log("API fetch failed, no local data found.");
                     }
                 }
 
                 if (profile) {
-                    // Map from common fields, prioritizing the ones from our API mapper
-                    const first = profile.firstName || profile.first_name || '';
-                    const last = profile.lastName || profile.last_name || '';
-                    const name = `${first} ${last}`.trim() || 'User Profile';
+                    const isRider = profile.role === 'rider';
+
+                    // Priority: name column -> firstName+lastName -> fallback
+                    const name = profile.name || `${profile.firstName || ''} ${profile.lastName || ''}`.trim() || 'User Profile';
                     const userEmail = profile.email || '';
-                    
-                    // Prioritize database column name 'mobile_number' then 'contactNumber'
-                    let userPhone = profile.contactNumber || profile.mobile_number || profile.mobileNumber || '';
-                    
+
+                    // For mobile_number: database uses 'mobile_number', app uses 'contactNumber'
+                    let userPhone = isRider ? (profile.phone || '') : (profile.mobile_number || profile.contactNumber || '');
+
                     // Strip prefixes for display logic
                     if (userPhone.startsWith('+63')) {
                         userPhone = userPhone.substring(3);
@@ -100,6 +104,10 @@ export default function PersonalInformationScreen() {
                     } else if (userPhone.startsWith('63')) {
                         userPhone = userPhone.substring(2);
                     }
+
+                    const nameParts = name.split(' ');
+                    const first = nameParts[0] || '';
+                    const last = nameParts.slice(1).join(' ') || '';
 
                     setFullName(name);
                     setEmail(userEmail);
@@ -174,7 +182,7 @@ export default function PersonalInformationScreen() {
 
     const handleFinalSave = async () => {
         const hasChanges = fullName !== initialName || phone !== initialPhone;
-        
+
         if (hasChanges) {
             setIsSaving(true);
             try {
@@ -183,11 +191,21 @@ export default function PersonalInformationScreen() {
                 const lastName = nameParts.slice(1).join(' ') || '';
                 const mobileNumber = phone.startsWith('+63') ? phone : `+63${phone}`;
 
-                await updateUserProfile({
-                    firstName,
-                    lastName,
-                    mobileNumber,
-                });
+                const updatePayload: any = {
+                    email: email, // Keep email same
+                    mobile_number: mobileNumber,
+                };
+
+                if (user?.role === 'rider') {
+                    updatePayload.name = fullName;
+                    updatePayload.phone = mobileNumber;
+                } else {
+                    updatePayload.firstName = firstName;
+                    updatePayload.lastName = lastName;
+                    updatePayload.mobileNumber = mobileNumber;
+                }
+
+                await updateUserProfile(updatePayload);
 
                 const profileJson = await AsyncStorage.getItem('user_profile');
                 if (profileJson) {
@@ -251,8 +269,8 @@ export default function PersonalInformationScreen() {
                     {/* Form */}
                     <RNAnimated.View style={[styles.form, makeEntrance(formAnim, 20)]}>
                         {/* Full Name */}
-                        <TouchableOpacity 
-                            style={styles.inputGroup} 
+                        <TouchableOpacity
+                            style={styles.inputGroup}
                             onPress={() => setNameModalVisible(true)}
                             activeOpacity={0.7}
                         >
@@ -272,8 +290,8 @@ export default function PersonalInformationScreen() {
                         </View>
 
                         {/* Mobile Number */}
-                        <TouchableOpacity 
-                            style={styles.inputGroup} 
+                        <TouchableOpacity
+                            style={styles.inputGroup}
                             onPress={() => setPhoneModalVisible(true)}
                             activeOpacity={0.7}
                         >
@@ -291,7 +309,7 @@ export default function PersonalInformationScreen() {
 
                 {/* Save Changes Button */}
                 <RNAnimated.View style={[
-                    styles.saveWrap, 
+                    styles.saveWrap,
                     { paddingBottom: Math.max(insets.bottom, 24), backgroundColor: colors.background, borderTopColor: colors.primary + '0A' },
                     makeEntrance(buttonAnim, 12)
                 ]}>
@@ -301,11 +319,7 @@ export default function PersonalInformationScreen() {
                         onPress={handleFinalSave}
                         disabled={isSaving}
                     >
-                        {isSaving ? (
-                            <ActivityIndicator color="#FFFFFF" size="small" />
-                        ) : (
-                            <Text style={styles.finalSaveText}>Save Changes</Text>
-                        )}
+                        {isSaving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.finalSaveText}>Save Changes</Text>}
                     </TouchableOpacity>
                 </RNAnimated.View>
             </KeyboardAvoidingView>
@@ -320,12 +334,12 @@ export default function PersonalInformationScreen() {
                         <Text style={[styles.modalTitle, { color: colors.heading }]}>Name</Text>
                         <View style={{ width: 40 }} />
                     </View>
-                    
+
                     <View style={styles.modalContent}>
                         <Text style={[styles.modalSubtitle, { color: colors.text }]}>This is how we will address you.</Text>
-                        
+
                         <View style={styles.modalInputGroup}>
-                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>First Name <Text style={{color: '#FF4444'}}>*</Text></Text>
+                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>First Name <Text style={{ color: '#FF4444' }}>*</Text></Text>
                             <TextInput
                                 style={[styles.modalInput, { backgroundColor: colors.surface, borderColor: colors.primary + '1A', color: colors.heading }]}
                                 value={tempFirstName}
@@ -337,7 +351,7 @@ export default function PersonalInformationScreen() {
                         </View>
 
                         <View style={styles.modalInputGroup}>
-                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>Last Name <Text style={{color: '#FF4444'}}>*</Text></Text>
+                            <Text style={[styles.modalInputLabel, { color: colors.heading }]}>Last Name <Text style={{ color: '#FF4444' }}>*</Text></Text>
                             <TextInput
                                 style={[styles.modalInput, { backgroundColor: colors.surface, borderColor: colors.primary + '1A', color: colors.heading }]}
                                 value={tempLastName}
@@ -349,8 +363,8 @@ export default function PersonalInformationScreen() {
                     </View>
 
                     <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-                        <TouchableOpacity 
-                            style={[styles.modalSaveBtn, { backgroundColor: colors.primary }, (!tempFirstName || !tempLastName) && styles.disabledBtn]} 
+                        <TouchableOpacity
+                            style={[styles.modalSaveBtn, { backgroundColor: colors.primary }, (!tempFirstName || !tempLastName) && styles.disabledBtn]}
                             onPress={handleSaveName}
                             disabled={!tempFirstName || !tempLastName}
                         >
@@ -370,22 +384,22 @@ export default function PersonalInformationScreen() {
                         <Text style={[styles.modalTitle, { color: colors.heading }]}>Mobile Number</Text>
                         <View style={{ width: 40 }} />
                     </View>
-                    
+
                     <View style={styles.modalContent}>
                         <Text style={[styles.modalSubtitle, { color: colors.text }]}>You will be contacted about your order at this Mobile Number.</Text>
-                        
+
                         <View style={styles.modalInputGroup}>
                             <Text style={[styles.modalInputLabel, { color: colors.heading }]}>Mobile Number</Text>
                         </View>
-                        
+
                         <View style={styles.phoneInputRow}>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 style={[styles.countryPicker, { backgroundColor: colors.surface, borderColor: colors.primary + '1A' }]}
                                 onPress={() => setCountryPickerVisible(!isCountryPickerVisible)}
                             >
-                                <Image 
-                                    source={{ uri: 'https://flagcdn.com/w40/ph.png' }} 
-                                    style={styles.flagIcon} 
+                                <Image
+                                    source={{ uri: 'https://flagcdn.com/w40/ph.png' }}
+                                    style={styles.flagIcon}
                                 />
                                 <Text style={[styles.countryCode, { color: colors.heading }]}>+63</Text>
                                 <Ionicons name="chevron-down" size={14} color={colors.text} />
@@ -402,29 +416,29 @@ export default function PersonalInformationScreen() {
                             />
                         </View>
 
-                        {phoneError ? (
+                        {!!phoneError && (
                             <Text style={styles.errorText}>{phoneError}</Text>
-                        ) : null}
+                        )}
 
-                        {isCountryPickerVisible && (
+                        {!!isCountryPickerVisible && (
                             <View style={[styles.countryPreview, { backgroundColor: colors.primary + '08', borderColor: colors.primary + '1A' }]}>
                                 <Ionicons name="checkmark" size={16} color={colors.heading} />
                                 <Text style={[styles.countryPreviewText, { color: colors.heading }]}>+63 Philippines</Text>
-                                <Image 
-                                    source={{ uri: 'https://flagcdn.com/w40/ph.png' }} 
-                                    style={styles.flagIconSmall} 
+                                <Image
+                                    source={{ uri: 'https://flagcdn.com/w40/ph.png' }}
+                                    style={styles.flagIconSmall}
                                 />
                             </View>
                         )}
                     </View>
 
                     <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-                        <TouchableOpacity 
+                        <TouchableOpacity
                             style={[
-                                styles.modalContinueBtn, 
+                                styles.modalContinueBtn,
                                 { backgroundColor: colors.primary },
                                 (tempPhone.length !== 10 || !!phoneError) && styles.disabledContinueBtn
-                            ]} 
+                            ]}
                             onPress={handleSavePhone}
                             disabled={tempPhone.length !== 10 || !!phoneError}
                         >
@@ -450,11 +464,11 @@ export default function PersonalInformationScreen() {
                                 <Ionicons name="checkmark" size={32} color="#FFFFFF" />
                             </View>
                         </View>
-                        
+
                         <Text style={[styles.successTitle, { color: colors.heading }]}>Profile Updated</Text>
                         <Text style={[styles.successSubtitle, { color: colors.text }]}>Your changes have been saved successfully!</Text>
-                        
-                        <TouchableOpacity 
+
+                        <TouchableOpacity
                             style={[styles.successOkBtn, { backgroundColor: colors.primary }]}
                             onPress={() => {
                                 setSuccessModalVisible(false);

@@ -4,11 +4,11 @@
     "slug": "makicapsapp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=1024",
+    "icon": "./assets/images/maki_logo.png",
     "scheme": "makicapsapp",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=1024",
+      "image": "./assets/images/maki_logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#D82E3F"
     },
@@ -26,7 +26,7 @@
         }
       },
       "adaptiveIcon": {
-        "foregroundImage": "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=1024",
+        "foregroundImage": "./assets/images/maki_logo.png",
         "backgroundColor": "#D82E3F"
       },
       "package": "com.mark.makicapsapp",
@@ -34,12 +34,13 @@
     },
     "web": {
       "output": "static",
-      "favicon": "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=1024"
+      "favicon": "./assets/images/maki_logo.png"
     },
     "plugins": [
       "expo-router",
       "expo-splash-screen",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

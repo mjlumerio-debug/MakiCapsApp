@@ -5,12 +5,13 @@ import { ThemedInput } from '@/components/ui/ThemedInput';
 import { Colors, Typography } from '@/constants/theme';
 import { useAppTheme } from '@/state/contexts/ThemeContext';
 import api from '@/lib/api';
-import { loginUser } from '@/lib/auth_api';
+import { mobileLogin } from '@/lib/auth_api';
 import { resolveGoogleSmartLocation } from '@/lib/google_location';
 import {
     resolveAndSetBestActiveAddress,
     setSelectedBranch,
     setUserId,
+    setUser,
     upsertAutoDetectedAddress
 } from '@/lib/ui_store';
 import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
@@ -30,6 +31,7 @@ import {
     View,
     useWindowDimensions,
     BackHandler,
+    Alert,
 } from 'react-native';
 import Animated, {
     FadeInDown,
@@ -217,7 +219,7 @@ export default function LoginScreen() {
         });
         resolveAndSetBestActiveAddress({ latitude, longitude });
 
-        const productsResponse = await api.get('/customer/products', {
+        const productsResponse = await api.get('customer/products', {
             params: { lat: latitude, lng: longitude },
         });
         const branch = productsResponse?.data?.branch;
@@ -235,6 +237,7 @@ export default function LoginScreen() {
         }
     };
 
+
     const handleLogin = async () => {
         const cleanEmail = email.trim().toLowerCase();
         setAuthError('');
@@ -251,15 +254,32 @@ export default function LoginScreen() {
 
         try {
             setIsSubmitting(true);
-            const user = await loginUser({ email: cleanEmail, password });
+            const user = await mobileLogin({ email: cleanEmail, password });
+
+            // Clear old profile cache to prevent role mixups
+            await AsyncStorage.removeItem('user_profile');
+
+            if (user.role === 'admin' || user.role === 'cashier') {
+                setIsSubmitting(false);
+                setAuthError('Access Denied: This app is only for Customers and Riders.');
+                Alert.alert("Access Denied", "Admins and Cashiers must use the web dashboard.");
+                return;
+            }
 
             setUserId(user.id);
+            setUser(user);
 
             await AsyncStorage.setItem('user_profile', JSON.stringify({
                 firstName: user.firstName,
                 lastName: user.lastName,
+                name: user.name,
                 email: user.email,
                 contactNumber: user.contactNumber,
+                role: user.role,
+                branchId: user.branchId,
+                riderId: user.riderId,
+                avatarId: user.avatarId || 1,
+                profilePictureUrl: user.profilePictureUrl || null
             }));
 
             try {
@@ -290,10 +310,15 @@ export default function LoginScreen() {
 
             setTimeout(() => {
                 setShowSuccessModal(false);
-                router.replace('/home_dashboard');
+                // Redirect based on role
+                if (user.role === 'rider') {
+                    router.replace('/rider/dashboard' as any);
+                } else {
+                    router.replace('/home_dashboard');
+                }
             }, 1450);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Login failed.';
+            const message = error instanceof Error ? error.message : 'Unable to connect. Try again.';
             setAuthError(message);
         } finally {
             setIsSubmitting(false);
@@ -404,12 +429,6 @@ export default function LoginScreen() {
                                     </TouchableOpacity>
                                 </View>
 
-                                <TouchableOpacity 
-                                    onPress={() => router.replace('/home_dashboard')} 
-                                    style={styles.guestLink}
-                                >
-                                    <Text style={styles.guestText}>Continue as Guest</Text>
-                                </TouchableOpacity>
                             </Animated.View>
 
                             <Animated.View

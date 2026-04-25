@@ -1,892 +1,680 @@
-import { useAppTheme } from '@/state/contexts/ThemeContext';
-import { fetchCurrentUser } from '@/lib/auth_api';
-import { setUserId } from '@/lib/ui_store';
-import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    Animated as RNAnimated,
-    Easing as RNEasing,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
     View,
+    Text,
+    StyleSheet,
+    TouchableOpacity,
+    ScrollView,
+    ActivityIndicator,
+    Modal,
+    Alert,
+    TextInput
 } from 'react-native';
+import { Image } from 'expo-image';
+import { Feather, MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { useAppTheme } from '@/state/contexts/ThemeContext';
+import { Typography } from '@/constants/theme';
+import { useRouter } from 'expo-router';
+import { useUiStore, logoutUser } from '@/lib/ui_store';
+import { updateProfilePassword, deleteAccount } from '@/lib/auth_api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-type ProfilePanelProps = {
-    bottomPadding: number;
-};
+const AVATARS = [
+    require('../assets/images/avatar_1.png'),
+    require('../assets/images/avatar_2.png'),
+    require('../assets/images/avatar_3.png'),
+    require('../assets/images/avatar_4.png'),
+];
 
-const MenuRow = ({ iconProvider: IconProvider, iconName, title, onPress, colors, rightIcon }: any) => (
-    <TouchableOpacity style={[styles.menuRow, { backgroundColor: colors.surface }]} onPress={onPress} activeOpacity={0.7}>
-        <View style={styles.menuLeft}>
-            <View style={styles.iconContainer}>
-                <IconProvider name={iconName} size={20} color={colors.primary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.heading }]}>{title}</Text>
-        </View>
-        <Feather name={rightIcon || "chevron-right"} size={20} color={colors.text} />
-    </TouchableOpacity>
-);
-
-export default function ProfilePanel({ bottomPadding }: ProfilePanelProps) {
-    const router = useRouter();
+export function ProfilePanel({ bottomPadding = 0 }: { bottomPadding?: number }) {
     const { colors, isDark, themeMode, setThemeMode } = useAppTheme();
+    const router = useRouter();
+    const { user } = useUiStore();
+    
+    const [avatarId, setAvatarId] = useState(0);
+    const [displayName, setDisplayName] = useState('Valued Customer');
+    const [displayEmail, setDisplayEmail] = useState('');
+    const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
+    const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+    const role = user?.role || 'customer';
 
-    const logoutSheetAnim = useRef(new RNAnimated.Value(0)).current;
-    const [showLogoutModal, setShowLogoutModal] = useState(false);
+    useEffect(() => {
+        const loadProfile = async () => {
+            setIsLoadingProfile(true);
+            try {
+                const cached = await AsyncStorage.getItem('user_profile');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    const fullName = `${parsed.firstName || ''} ${parsed.lastName || ''}`.trim();
+                    setDisplayName(fullName || parsed.name || 'Valued Customer');
+                    setDisplayEmail(parsed.email || '');
+                    setAvatarId(parsed.avatarId || 0);
+                    setProfilePictureUrl(parsed.profilePictureUrl || null);
+                } else if (user) {
+                    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+                    setDisplayName(fullName || user.name || 'Valued Customer');
+                    setDisplayEmail(user.email || '');
+                    setAvatarId(user.avatarId || 0);
+                    setProfilePictureUrl(user.profilePictureUrl || null);
+                }
+            } catch (e) {
+                console.error('Failed to load profile cache', e);
+            } finally {
+                setIsLoadingProfile(false);
+            }
+        };
+        loadProfile();
+    }, [user]);
 
-    const deleteSheetAnim = useRef(new RNAnimated.Value(0)).current;
-    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const cycleAvatar = async () => {
+        const nextId = (avatarId + 1) % AVATARS.length;
+        setAvatarId(nextId);
+        try {
+            const cached = await AsyncStorage.getItem('user_profile');
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                parsed.avatarId = nextId;
+                await AsyncStorage.setItem('user_profile', JSON.stringify(parsed));
+            }
+        } catch (e) {
+            console.error('Failed to save avatar choice', e);
+        }
+    };
 
-    const verifyDeleteSheetAnim = useRef(new RNAnimated.Value(0)).current;
-    const [showVerifyDeleteModal, setShowVerifyDeleteModal] = useState(false);
+    const [isLogoutModalVisible, setLogoutModalVisible] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isChangePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+    const [isDeleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
 
-    const changePwdSheetAnim = useRef(new RNAnimated.Value(0)).current;
-    const [showChangePwdModal, setShowChangePwdModal] = useState(false);
-
-    const [isSettingsExpanded, setIsSettingsExpanded] = useState(false);
-
-    // Change password form state
+    // Form States
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [displayName, setDisplayName] = useState('Guest User');
-    const [displayEmail, setDisplayEmail] = useState('No email available');
-    const [isLoadingProfile, setIsLoadingProfile] = useState(true);
-
-    useEffect(() => {
-        let mounted = true;
-
-        const hydrateProfile = async (): Promise<void> => {
-            try {
-                const cachedProfile = await AsyncStorage.getItem('user_profile');
-                if (cachedProfile && mounted) {
-                    const parsed = JSON.parse(cachedProfile);
-                    const localName = `${parsed.firstName || ''} ${parsed.lastName || ''}`.trim();
-                    setDisplayName(localName || 'Guest User');
-                    setDisplayEmail(parsed.email || 'No email available');
-                }
-            } catch (error) {
-                console.error('Failed to read cached user profile', error);
-            }
-
-            try {
-                const user = await fetchCurrentUser();
-                if (!mounted) return;
-
-                const fullName = `${user.firstName} ${user.lastName}`.trim();
-                setDisplayName(fullName || 'Guest User');
-                setDisplayEmail(user.email || 'No email available');
-
-                await AsyncStorage.setItem(
-                    'user_profile',
-                    JSON.stringify({
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        email: user.email,
-                        contactNumber: user.contactNumber,
-                    })
-                );
-            } catch (error) {
-                console.error('Failed to fetch authenticated user profile', error);
-            } finally {
-                if (mounted) {
-                    setIsLoadingProfile(false);
-                }
-            }
-        };
-
-        hydrateProfile();
-
-        return () => {
-            mounted = false;
-        };
-    }, []);
 
     const handleLogout = async () => {
-        const { logoutUser } = await import('@/lib/ui_store');
+        setLogoutModalVisible(false);
         await logoutUser();
         router.replace('/login');
     };
 
-    const openLogoutSheet = useCallback(() => {
-        setShowLogoutModal(true);
-        RNAnimated.spring(logoutSheetAnim, {
-            toValue: 1,
-            useNativeDriver: true,
-            damping: 24,
-            stiffness: 280,
-        }).start();
-    }, [logoutSheetAnim]);
+    const handleChangePassword = async () => {
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            Alert.alert("Error", "Please fill in all fields.");
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            Alert.alert("Error", "New passwords do not match.");
+            return;
+        }
 
-    const closeLogoutSheet = useCallback(() => {
-        RNAnimated.timing(logoutSheetAnim, {
-            toValue: 0,
-            duration: 200,
-            easing: RNEasing.out(RNEasing.cubic),
-            useNativeDriver: true,
-        }).start(() => setShowLogoutModal(false));
-    }, [logoutSheetAnim]);
+        try {
+            setIsLoadingProfile(true);
+            await updateProfilePassword({
+                current_password: currentPassword,
+                new_password: newPassword,
+                new_password_confirmation: confirmPassword
+            });
+            Alert.alert("Success", "Password changed successfully!");
+            setChangePasswordModalVisible(false);
+            setCurrentPassword('');
+            setNewPassword('');
+            setConfirmPassword('');
+        } catch (error: any) {
+            Alert.alert("Failed", error.message || "Could not change password.");
+        } finally {
+            setIsLoadingProfile(false);
+        }
+    };
 
-    const performLogout = () => {
-        closeLogoutSheet();
-        setTimeout(() => {
+    const handleDeleteAccount = async () => {
+        try {
+            setIsLoadingProfile(true);
+            await deleteAccount();
+            Alert.alert("Account Deleted", "Your account has been permanently removed.");
+            setDeleteAccountModalVisible(false);
             handleLogout();
-        }, 250);
-    };
-
-    const openDeleteSheet = useCallback(() => {
-        setShowDeleteModal(true);
-        RNAnimated.spring(deleteSheetAnim, {
-            toValue: 1,
-            useNativeDriver: true,
-            damping: 24,
-            stiffness: 280,
-        }).start();
-    }, [deleteSheetAnim]);
-
-    const closeDeleteSheet = useCallback(() => {
-        RNAnimated.timing(deleteSheetAnim, {
-            toValue: 0,
-            duration: 200,
-            easing: RNEasing.out(RNEasing.cubic),
-            useNativeDriver: true,
-        }).start(() => setShowDeleteModal(false));
-    }, [deleteSheetAnim]);
-
-    const openVerifyDeleteSheet = useCallback(() => {
-        setShowVerifyDeleteModal(true);
-        RNAnimated.spring(verifyDeleteSheetAnim, {
-            toValue: 1,
-            useNativeDriver: true,
-            damping: 24,
-            stiffness: 280,
-        }).start();
-    }, [verifyDeleteSheetAnim]);
-
-    const closeVerifyDeleteSheet = useCallback(() => {
-        RNAnimated.timing(verifyDeleteSheetAnim, {
-            toValue: 0,
-            duration: 200,
-            easing: RNEasing.out(RNEasing.cubic),
-            useNativeDriver: true,
-        }).start(() => setShowVerifyDeleteModal(false));
-    }, [verifyDeleteSheetAnim]);
-
-    const performVerifyDelete = () => {
-        closeVerifyDeleteSheet();
-        setTimeout(() => {
-            handleLogout();
-        }, 250);
-    };
-
-    const performDeleteAccount = () => {
-        closeDeleteSheet();
-        setTimeout(() => {
-            openVerifyDeleteSheet();
-        }, 250);
-    };
-
-    const openChangePwdSheet = useCallback(() => {
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setShowChangePwdModal(true);
-        RNAnimated.spring(changePwdSheetAnim, {
-            toValue: 1,
-            useNativeDriver: true,
-            damping: 24,
-            stiffness: 280,
-        }).start();
-    }, [changePwdSheetAnim]);
-
-    const closeChangePwdSheet = useCallback(() => {
-        RNAnimated.timing(changePwdSheetAnim, {
-            toValue: 0,
-            duration: 200,
-            easing: RNEasing.out(RNEasing.cubic),
-            useNativeDriver: true,
-        }).start(() => setShowChangePwdModal(false));
-    }, [changePwdSheetAnim]);
-
-    const performChangePassword = () => {
-        closeChangePwdSheet();
-        // Assume API success for now
+        } catch (error: any) {
+            Alert.alert("Failed", error.message || "Could not delete account.");
+        } finally {
+            setIsLoadingProfile(false);
+        }
     };
 
     return (
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
-            <ScrollView
-                contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
-                showsVerticalScrollIndicator={false}
-            >
-                {/* Avatar + Name */}
+        <ScrollView 
+            style={[styles.container, { backgroundColor: colors.background }]}
+            contentContainerStyle={{ paddingBottom: bottomPadding + 40 }}
+            showsVerticalScrollIndicator={false}
+        >
+            <View style={styles.content}>
+                {/* Avatar + Name Section */}
                 <View style={styles.header}>
-                    <View style={styles.avatarContainer}>
+                    <TouchableOpacity 
+                        style={styles.avatarContainer} 
+                        onPress={cycleAvatar}
+                        activeOpacity={0.8}
+                    >
                         <Image
-                            source={require('../assets/images/chef.png')}
+                            source={profilePictureUrl ? { uri: profilePictureUrl } : AVATARS[avatarId]}
                             style={[styles.avatar, { backgroundColor: colors.surface }]}
                             contentFit="cover"
                         />
                         <View style={[styles.badgeContainer, { backgroundColor: colors.primary }]}>
-                            <MaterialIcons name="verified" size={14} color={colors.background} />
+                            <MaterialIcons name="edit" size={12} color="#FFF" />
                         </View>
-                    </View>
+                    </TouchableOpacity>
+                    
                     {isLoadingProfile ? (
-                        <ActivityIndicator size="small" color={colors.primary} style={{ marginBottom: 8 }} />
-                    ) : null}
-                    <Text style={[styles.name, { color: colors.heading }]}>{displayName}</Text>
-                    <Text style={[styles.email, { color: colors.text }]}>{displayEmail}</Text>
+                        <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 12 }} />
+                    ) : (
+                        <>
+                            <Text style={[styles.name, { color: colors.heading }]}>{displayName}</Text>
+                            <Text style={[styles.email, { color: colors.text, opacity: 0.6 }]}>{displayEmail || '...'}</Text>
+                        </>
+                    )}
                 </View>
 
-                {/* Menu items */}
-                <View style={styles.menuList}>
-                    <MenuRow iconProvider={Feather} iconName="user" title="Personal Information" onPress={() => router.push('/personal-information' as any)} colors={colors} />
-                    <MenuRow iconProvider={Feather} iconName="tag" title="My Orders" onPress={() => {
-                        router.push('/my-orders');
-                    }} colors={colors} />
-                    <MenuRow iconProvider={Ionicons} iconName="location-outline" title="Addresses" onPress={() => router.push('/addresses' as any)} colors={colors} />
-                    <MenuRow iconProvider={Ionicons} iconName="wallet-outline" title="Payment Methods" onPress={() => router.push('/payment-methods' as any)} colors={colors} />
-                    <MenuRow
-                        iconProvider={Feather}
-                        iconName="settings"
-                        title="Settings"
-                        onPress={() => setIsSettingsExpanded(!isSettingsExpanded)}
-                        colors={colors}
-                        rightIcon={isSettingsExpanded ? "chevron-down" : "chevron-right"}
+                {/* Menu List */}
+                <View style={styles.menuContainer}>
+                    <MenuRow 
+                        iconProvider={Feather} 
+                        iconName="user" 
+                        title="Personal Information" 
+                        onPress={() => router.push('/personal-information' as any)} 
+                        colors={colors} 
                     />
-                    {isSettingsExpanded && (
-                        <View style={[styles.submenuContainer, { backgroundColor: colors.background }]}>
-                            <TouchableOpacity style={[styles.submenuRow, { borderBottomColor: colors.surface }]} onPress={openChangePwdSheet} activeOpacity={0.7}>
-                                <View style={styles.submenuLeft}>
-                                    <Feather name="lock" size={18} color={colors.heading} />
-                                    <Text style={[styles.submenuText, { color: colors.heading }]}>Change Password</Text>
-                                </View>
-                                <Feather name="chevron-right" size={18} color={colors.text} />
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[styles.submenuRow, { borderBottomColor: colors.surface }]} onPress={openDeleteSheet} activeOpacity={0.7}>
-                                <View style={styles.submenuLeft}>
-                                    <Feather name="user-x" size={18} color="#DC2626" />
-                                    <Text style={[styles.submenuText, { color: '#DC2626' }]}>Delete Account</Text>
-                                </View>
-                                <Feather name="chevron-right" size={18} color={colors.text} />
-                            </TouchableOpacity>
+                    
+                    <MenuRow 
+                        iconProvider={Feather} 
+                        iconName="shopping-bag" 
+                        title="My Orders" 
+                        onPress={() => router.push('/my-orders' as any)} 
+                        colors={colors} 
+                    />
+                    
+                    <MenuRow 
+                        iconProvider={Feather} 
+                        iconName="map-pin" 
+                        title="Addresses" 
+                        onPress={() => router.push('/addresses' as any)} 
+                        colors={colors} 
+                    />
+                    
+                    <MenuRow 
+                        iconProvider={Feather} 
+                        iconName="credit-card" 
+                        title="Payment Methods" 
+                        onPress={() => router.push('/payment-methods' as any)} 
+                        colors={colors} 
+                    />
+                    
+                    {/* Settings Accordion */}
+                    <TouchableOpacity 
+                        style={[styles.menuRow, { borderBottomColor: colors.border + '15' }]} 
+                        onPress={() => setIsSettingsOpen(!isSettingsOpen)}
+                    >
+                        <View style={styles.menuLeft}>
+                            <View style={[styles.iconBox, { backgroundColor: colors.surface }]}>
+                                <Feather name="settings" size={18} color={colors.primary} />
+                            </View>
+                            <Text style={[styles.menuTitle, { color: colors.heading }]}>Settings</Text>
+                        </View>
+                        <Feather name={isSettingsOpen ? "chevron-up" : "chevron-down"} size={18} color={colors.text} opacity={0.3} />
+                    </TouchableOpacity>
 
-                            {/* Theme Selector Section */}
-                            <View style={styles.themeSection}>
-                                <Text style={[styles.themeLabel, { color: colors.text }]}>Appearance</Text>
-                                <View style={styles.themeOptionsContainer}>
-                                    {[
-                                        { id: 'light', label: 'Light', icon: 'sunny-outline' as const },
-                                        { id: 'dark', label: 'Dark', icon: 'moon-outline' as const },
-                                        { id: 'system', label: 'System', icon: 'options-outline' as const },
-                                    ].map((item) => {
-                                        const isSelected = themeMode === item.id;
-                                        return (
-                                            <TouchableOpacity
-                                                key={item.id}
-                                                activeOpacity={0.7}
-                                                onPress={() => {
-                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                    setThemeMode(item.id as any);
-                                                }}
-                                                style={[
-                                                    styles.themeOption,
-                                                    { backgroundColor: colors.background },
-                                                    isSelected && { backgroundColor: colors.primary + '15', borderColor: colors.primary }
-                                                ]}
-                                            >
-                                                <Ionicons 
-                                                    name={item.icon} 
-                                                    size={16} 
-                                                    color={isSelected ? colors.primary : colors.text} 
-                                                />
-                                                <Text style={[
-                                                    styles.themeOptionText, 
-                                                    { color: isSelected ? colors.primary : colors.text },
-                                                    isSelected && { fontWeight: '700' }
-                                                ]}>
-                                                    {item.label}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        );
-                                    })}
+                    {isSettingsOpen && (
+                        <View style={[styles.subMenu, { backgroundColor: colors.background }]}>
+                            <MenuRow 
+                                iconProvider={Feather} 
+                                iconName="lock" 
+                                title="Change Password" 
+                                onPress={() => setChangePasswordModalVisible(true)} 
+                                colors={colors} 
+                            />
+
+                            <MenuRow 
+                                iconProvider={Feather} 
+                                iconName="user-x" 
+                                title="Delete Account" 
+                                onPress={() => setDeleteAccountModalVisible(true)} 
+                                colors={colors} 
+                                titleStyle={{ color: '#FF4444' }}
+                            />
+
+                            {/* Appearance Section now INSIDE Settings */}
+                            <View style={styles.appearanceSection}>
+                                <Text style={[styles.sectionLabel, { color: colors.text, opacity: 0.5 }]}>APPEARANCE</Text>
+                                <View style={[styles.themeToggleWrap, { backgroundColor: colors.surface }]}>
+                                    <TouchableOpacity 
+                                        style={[styles.themeBtn, themeMode === 'light' && styles.activeThemeBtn, themeMode === 'light' && { backgroundColor: colors.background }]}
+                                        onPress={() => setThemeMode('light')}
+                                    >
+                                        <Feather name="sun" size={14} color={themeMode === 'light' ? colors.primary : colors.text} />
+                                        <Text style={[styles.themeBtnText, { color: themeMode === 'light' ? colors.primary : colors.text }]}>Light</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.themeBtn, themeMode === 'dark' && styles.activeThemeBtn, themeMode === 'dark' && { backgroundColor: colors.background }]}
+                                        onPress={() => setThemeMode('dark')}
+                                    >
+                                        <Feather name="moon" size={14} color={themeMode === 'dark' ? colors.primary : colors.text} />
+                                        <Text style={[styles.themeBtnText, { color: themeMode === 'dark' ? colors.primary : colors.text }]}>Dark</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.themeBtn, themeMode === 'system' && styles.activeThemeBtn, themeMode === 'system' && { backgroundColor: colors.background }]}
+                                        onPress={() => setThemeMode('system')}
+                                    >
+                                        <Feather name="sliders" size={14} color={themeMode === 'system' ? colors.primary : colors.text} />
+                                        <Text style={[styles.themeBtnText, { color: themeMode === 'system' ? colors.primary : colors.text }]}>System</Text>
+                                    </TouchableOpacity>
                                 </View>
                             </View>
                         </View>
                     )}
-                    <MenuRow
-                        iconProvider={Feather}
-                        iconName="log-out"
-                        title="Logout"
-                        onPress={openLogoutSheet}
-                        colors={colors}
+
+                    <MenuRow 
+                        iconProvider={Feather} 
+                        iconName="log-out" 
+                        title="Logout" 
+                        onPress={() => setLogoutModalVisible(true)} 
+                        colors={colors} 
+                        isLast
                     />
                 </View>
-            </ScrollView>
+            </View>
 
-            {/* --- Logout Modal --- */}
-            {showLogoutModal && (
-                <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
-                    <RNAnimated.View
-                        style={[
-                            styles.modalBackdrop,
-                            {
-                                opacity: logoutSheetAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0, 1],
-                                }),
-                            },
-                        ]}
-                    >
-                        <TouchableOpacity
-                            activeOpacity={1}
-                            style={{ flex: 1 }}
-                            onPress={closeLogoutSheet}
-                        />
-                    </RNAnimated.View>
+            {/* Change Password Modal */}
+            <Modal
+                visible={isChangePasswordModalVisible}
+                transparent={true}
+                animationType="slide"
+            >
+                <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+                    <View style={[styles.modalContent, { backgroundColor: '#FFF9F2' }]}>
+                        <View style={[styles.iconCircle, { backgroundColor: colors.primary + '10' }]}>
+                            <Feather name="lock" size={24} color={colors.primary} />
+                        </View>
+                        <Text style={[styles.modalTitle, { color: '#4A2B2B' }]}>Change Password</Text>
+                        
+                        <View style={styles.inputGroup}>
+                            <TextInput
+                                style={styles.modalInput}
+                                placeholder="Current Password"
+                                secureTextEntry
+                                value={currentPassword}
+                                onChangeText={setCurrentPassword}
+                            />
+                            <TextInput
+                                style={styles.modalInput}
+                                placeholder="New Password"
+                                secureTextEntry
+                                value={newPassword}
+                                onChangeText={setNewPassword}
+                            />
+                            <TextInput
+                                style={styles.modalInput}
+                                placeholder="Confirm New Password"
+                                secureTextEntry
+                                value={confirmPassword}
+                                onChangeText={setConfirmPassword}
+                            />
+                        </View>
 
-                    <View style={styles.modalCenterContainer} pointerEvents="box-none">
-                        <RNAnimated.View
-                            style={[
-                                styles.logoutModalCard,
-                                {
-                                    backgroundColor: colors.surface,
-                                    shadowColor: colors.primary,
-                                    opacity: logoutSheetAnim,
-                                    transform: [
-                                        {
-                                            scale: logoutSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0.85, 1],
-                                            }),
-                                        },
-                                        {
-                                            translateY: logoutSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [20, 0],
-                                            }),
-                                        }
-                                    ],
-                                },
-                            ]}
-                        >
-                            <View style={[styles.logoutIconCircle, { backgroundColor: colors.background }]}>
-                                <Feather name="log-out" size={28} color={colors.primary} />
-                            </View>
-                            <Text style={[styles.logoutTitle, { color: colors.heading }]}>Logout Session?</Text>
-                            <Text style={[styles.logoutSubtitle, { color: colors.text }]}>
-                                Are you sure you want to end your session? You can log back in later.
-                            </Text>
-
-                            <View style={styles.logoutButtonsRow}>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.logoutCancelButton, { backgroundColor: colors.background }]}
-                                    onPress={closeLogoutSheet}
-                                >
-                                    <Text style={[styles.logoutCancelText, { color: colors.heading }]}>Cancel</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.logoutConfirmButton, { backgroundColor: colors.primary }]}
-                                    onPress={performLogout}
-                                >
-                                    <Text style={[styles.logoutConfirmText, { color: colors.background }]}>Confirm</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </RNAnimated.View>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity 
+                                style={[styles.cancelBtn, { backgroundColor: '#D38C9D' }]}
+                                onPress={() => setChangePasswordModalVisible(false)}
+                            >
+                                <Text style={styles.btnTextWhite}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.saveBtn, { backgroundColor: '#FF5800' }]}
+                                onPress={handleChangePassword}
+                            >
+                                <Text style={styles.btnTextWhite}>Save</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
-            )}
+            </Modal>
 
-            {/* --- Delete Account Modal --- */}
-            {showDeleteModal && (
-                <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
-                    <RNAnimated.View
-                        style={[
-                            styles.modalBackdrop,
-                            {
-                                opacity: deleteSheetAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0, 1],
-                                }),
-                            },
-                        ]}
-                    >
-                        <TouchableOpacity
-                            activeOpacity={1}
-                            style={{ flex: 1 }}
-                            onPress={closeDeleteSheet}
-                        />
-                    </RNAnimated.View>
+            {/* Delete Account Modal */}
+            <Modal
+                visible={isDeleteAccountModalVisible}
+                transparent={true}
+                animationType="fade"
+            >
+                <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+                    <View style={[styles.modalContent, { backgroundColor: '#FFF9F2' }]}>
+                        <View style={[styles.iconCircle, { backgroundColor: '#FFEBEB' }]}>
+                            <Feather name="alert-triangle" size={24} color="#FF4444" />
+                        </View>
+                        <Text style={[styles.modalTitle, { color: '#4A2B2B' }]}>Delete Account?</Text>
+                        <Text style={styles.warningText}>
+                            Are you sure you want to permanently delete your account? This action cannot be undone and all your data will be lost.
+                        </Text>
 
-                    <View style={styles.modalCenterContainer} pointerEvents="box-none">
-                        <RNAnimated.View
-                            style={[
-                                styles.logoutModalCard,
-                                {
-                                    opacity: deleteSheetAnim,
-                                    transform: [
-                                        {
-                                            scale: deleteSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0.85, 1],
-                                            }),
-                                        },
-                                        {
-                                            translateY: deleteSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [20, 0],
-                                            }),
-                                        }
-                                    ],
-                                },
-                            ]}
-                        >
-                            <View style={[styles.logoutIconCircle, { backgroundColor: '#FEE2E2' }]}>
-                                <Feather name="alert-triangle" size={28} color="#DC2626" />
-                            </View>
-                            <Text style={styles.logoutTitle}>Delete Account?</Text>
-                            <Text style={styles.logoutSubtitle}>
-                                Are you sure you want to permanently delete your account? This action cannot be undone and all your data will be lost.
-                            </Text>
-
-                            <View style={styles.logoutButtonsRow}>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.logoutCancelButton}
-                                    onPress={closeDeleteSheet}
-                                >
-                                    <Text style={styles.logoutCancelText}>Cancel</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.logoutConfirmButton, { backgroundColor: '#DC2626', shadowColor: '#DC2626' }]}
-                                    onPress={performDeleteAccount}
-                                >
-                                    <Text style={styles.logoutConfirmText}>Delete</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </RNAnimated.View>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity 
+                                style={[styles.cancelBtn, { backgroundColor: '#D38C9D' }]}
+                                onPress={() => setDeleteAccountModalVisible(false)}
+                            >
+                                <Text style={styles.btnTextWhite}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.deleteBtn, { backgroundColor: '#E53935' }]}
+                                onPress={handleDeleteAccount}
+                            >
+                                <Text style={styles.btnTextWhite}>Delete</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
-            )}
+            </Modal>
 
-            {/* --- Verify Delete Account Modal --- */}
-            {showVerifyDeleteModal && (
-                <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
-                    <RNAnimated.View
-                        style={[
-                            styles.modalBackdrop,
-                            {
-                                opacity: verifyDeleteSheetAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0, 1],
-                                }),
-                            },
-                        ]}
-                    >
-                        <TouchableOpacity
-                            activeOpacity={1}
-                            style={{ flex: 1 }}
-                            onPress={closeVerifyDeleteSheet}
-                        />
-                    </RNAnimated.View>
-
-                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalCenterContainer} pointerEvents="box-none">
-                        <RNAnimated.View
-                            style={[
-                                styles.logoutModalCard,
-                                {
-                                    opacity: verifyDeleteSheetAnim,
-                                    transform: [
-                                        {
-                                            scale: verifyDeleteSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0.85, 1],
-                                            }),
-                                        },
-                                        {
-                                            translateY: verifyDeleteSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [20, 0],
-                                            }),
-                                        }
-                                    ],
-                                },
-                            ]}
-                        >
-                            <View style={[styles.logoutIconCircle, { backgroundColor: '#FEE2E2' }]}>
-                                <Feather name="mail" size={28} color="#D38C9D" />
-                            </View>
-                            <Text style={styles.logoutTitle}>Verify to Delete</Text>
-                            <Text style={styles.logoutSubtitle}>
-                                For your security, please check your Gmail (mjlumerio@gmail.com) and enter the 6-digit verification code to confirm account deletion.
-                            </Text>
-
-                            <View style={[styles.inputContainer, { marginBottom: 32 }]}>
-                                <TextInput
-                                    style={[styles.modalInput, { textAlign: 'center', fontSize: 24, letterSpacing: 8, fontWeight: '600' }]}
-                                    placeholder="000000"
-                                    placeholderTextColor="#D1D5DB"
-                                    keyboardType="number-pad"
-                                    maxLength={6}
-                                />
-                            </View>
-
-                            <View style={styles.logoutButtonsRow}>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.logoutCancelButton}
-                                    onPress={closeVerifyDeleteSheet}
-                                >
-                                    <Text style={styles.logoutCancelText}>Cancel</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.logoutConfirmButton, { backgroundColor: '#DC2626', shadowColor: '#DC2626' }]}
-                                    onPress={performVerifyDelete}
-                                >
-                                    <Text style={styles.logoutConfirmText}>Confirm</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </RNAnimated.View>
-                    </KeyboardAvoidingView>
+            {/* Logout Modal */}
+            <Modal
+                visible={isLogoutModalVisible}
+                transparent={true}
+                animationType="fade"
+            >
+                <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+                    <View style={[styles.logoutModalContent, { backgroundColor: colors.surface }]}>
+                        <View style={[styles.logoutIconBox, { backgroundColor: colors.primary + '10' }]}>
+                            <Feather name="log-out" size={32} color={colors.primary} />
+                        </View>
+                        <Text style={[styles.logoutModalTitle, { color: colors.heading }]}>Logout Session?</Text>
+                        <Text style={[styles.logoutModalSubtitle, { color: colors.text }]}>
+                            Are you sure you want to end your session? You can log back in later.
+                        </Text>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity 
+                                style={[styles.cancelBtn, { backgroundColor: '#D38C9D' }]}
+                                onPress={() => setLogoutModalVisible(false)}
+                            >
+                                <Text style={styles.btnTextWhite}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.confirmBtn, { backgroundColor: colors.primary }]}
+                                onPress={handleLogout}
+                            >
+                                <Text style={styles.btnTextWhite}>Confirm</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
                 </View>
-            )}
+            </Modal>
+        </ScrollView>
+    );
+}
 
-            {/* --- Change Password Modal --- */}
-            {showChangePwdModal && (
-                <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
-                    <RNAnimated.View
-                        style={[
-                            styles.modalBackdrop,
-                            {
-                                opacity: changePwdSheetAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0, 1],
-                                }),
-                            },
-                        ]}
-                    >
-                        <TouchableOpacity
-                            activeOpacity={1}
-                            style={{ flex: 1 }}
-                            onPress={closeChangePwdSheet}
-                        />
-                    </RNAnimated.View>
-
-                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalCenterContainer} pointerEvents="box-none">
-                        <RNAnimated.View
-                            style={[
-                                styles.logoutModalCard,
-                                {
-                                    opacity: changePwdSheetAnim,
-                                    transform: [
-                                        {
-                                            scale: changePwdSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0.85, 1],
-                                            }),
-                                        },
-                                        {
-                                            translateY: changePwdSheetAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [20, 0],
-                                            }),
-                                        }
-                                    ],
-                                },
-                            ]}
-                        >
-                            <View style={[styles.logoutIconCircle, { backgroundColor: '#FFF0E6' }]}>
-                                <Feather name="lock" size={28} color="#D38C9D" />
-                            </View>
-                            <Text style={styles.logoutTitle}>Change Password</Text>
-
-                            <View style={styles.inputContainer}>
-                                <TextInput
-                                    style={[styles.modalInput, { backgroundColor: colors.background, color: colors.heading, borderColor: colors.primary }]}
-                                    placeholder="Current Password"
-                                    placeholderTextColor={colors.text}
-                                    secureTextEntry
-                                    value={currentPassword}
-                                    onChangeText={setCurrentPassword}
-                                />
-                                <TextInput
-                                    style={[styles.modalInput, { backgroundColor: colors.background, color: colors.heading, borderColor: colors.primary }]}
-                                    placeholder="New Password"
-                                    placeholderTextColor={colors.text}
-                                    secureTextEntry
-                                    value={newPassword}
-                                    onChangeText={setNewPassword}
-                                />
-                                <TextInput
-                                    style={[styles.modalInput, { backgroundColor: colors.background, color: colors.heading, borderColor: colors.primary }]}
-                                    placeholder="Confirm New Password"
-                                    placeholderTextColor={colors.text}
-                                    secureTextEntry
-                                    value={confirmPassword}
-                                    onChangeText={setConfirmPassword}
-                                />
-                            </View>
-
-                            <View style={styles.logoutButtonsRow}>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.logoutCancelButton}
-                                    onPress={closeChangePwdSheet}
-                                >
-                                    <Text style={styles.logoutCancelText}>Cancel</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.logoutConfirmButton, { backgroundColor: '#FF5800', shadowColor: '#FF5800' }]}
-                                    onPress={performChangePassword}
-                                >
-                                    <Text style={styles.logoutConfirmText}>Save</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </RNAnimated.View>
-                    </KeyboardAvoidingView>
+function MenuRow({ iconProvider: Icon, iconName, title, onPress, colors, isLast }: any) {
+    return (
+        <TouchableOpacity 
+            style={[styles.menuRow, { borderBottomColor: isLast ? 'transparent' : colors.border + '15' }]} 
+            onPress={onPress}
+        >
+            <View style={styles.menuLeft}>
+                <View style={[styles.iconBox, { backgroundColor: colors.surface }]}>
+                    <Icon name={iconName} size={18} color={colors.primary} />
                 </View>
-            )}
-        </View>
+                <Text style={[styles.menuTitle, { color: colors.heading }]}>{title}</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.text} opacity={0.3} />
+        </TouchableOpacity>
     );
 }
 
 const styles = StyleSheet.create({
-    scrollContent: {
-        paddingTop: 0,
+    container: {
+        flex: 1,
+    },
+    content: {
+        padding: 24,
     },
     header: {
         alignItems: 'center',
-        marginTop: 10,
-        marginBottom: 20,
+        marginBottom: 32,
+        marginTop: 20,
     },
     avatarContainer: {
         position: 'relative',
-        marginBottom: 14,
+        marginBottom: 16,
     },
     avatar: {
         width: 100,
         height: 100,
         borderRadius: 50,
-        backgroundColor: '#D38C9D', // Blush
+        borderWidth: 3,
+        borderColor: '#FFF',
     },
     badgeContainer: {
         position: 'absolute',
-        bottom: 4,
-        right: 4,
-        backgroundColor: '#D38C9D', // Antique Rose
-        borderRadius: 12,
-        width: 22,
-        height: 22,
+        bottom: 0,
+        right: 0,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 2,
-        borderColor: '#F8F9FA',
+        borderColor: '#FFF',
     },
     name: {
         fontSize: 22,
-        fontWeight: '600',
+        fontFamily: Typography.h2,
         marginBottom: 4,
+        textAlign: 'center',
     },
     email: {
         fontSize: 14,
-        color: '#7A5560', // Body Mauve
+        fontFamily: Typography.body,
+        textAlign: 'center',
     },
-    menuList: {
-        paddingHorizontal: 20,
+    menuContainer: {
+        borderRadius: 24,
+        overflow: 'hidden',
+    },
+    subMenu: {
+        paddingLeft: 12,
+        borderRadius: 16,
+        marginTop: -1,
     },
     menuRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: '#D38C9D', // Blush
-        padding: 16,
-        marginBottom: 12,
-        borderRadius: 16,
-        shadowColor: '#D38C9D',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 8,
-        elevation: 2,
+        paddingVertical: 16,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
     },
     menuLeft: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 16,
     },
-    iconContainer: {
-        marginRight: 16,
+    iconBox: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    menuText: {
+    menuTitle: {
         fontSize: 16,
-        fontWeight: '500',
+        fontFamily: Typography.h2,
     },
-    submenuContainer: {
-        backgroundColor: '#FBEAD6', // Champagne for accordion
-        borderRadius: 16,
-        paddingVertical: 4,
-        paddingHorizontal: 16,
+    appearanceSection: {
+        marginTop: 24,
+        marginBottom: 16,
+        paddingHorizontal: 4,
+    },
+    sectionLabel: {
+        fontSize: 12,
+        fontWeight: '700',
         marginBottom: 12,
-        marginTop: -8, // Pull closer to Settings
+        letterSpacing: 1,
     },
-    submenuRow: {
+    themeToggleWrap: {
+        flexDirection: 'row',
+        padding: 4,
+        borderRadius: 14,
+        height: 52,
+    },
+    themeBtn: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 14,
-        borderBottomWidth: 1,
-        borderBottomColor: '#D38C9D', // Blush
+        justifyContent: 'center',
+        borderRadius: 10,
+        gap: 8,
     },
-    submenuLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
+    activeThemeBtn: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
     },
-    submenuText: {
-        fontSize: 15,
-        fontWeight: '500',
-    },
-    themeSection: {
-        marginTop: 16,
-        marginBottom: 8,
-    },
-    themeLabel: {
+    themeBtnText: {
         fontSize: 13,
         fontWeight: '700',
-        textTransform: 'uppercase',
-        letterSpacing: 1,
-        marginBottom: 12,
-        opacity: 0.7,
     },
-    themeOptionsContainer: {
-        flexDirection: 'row',
-        gap: 10,
-    },
-    themeOption: {
+    modalOverlay: {
         flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 10,
-        borderRadius: 12,
-        borderWidth: 1.5,
-        borderColor: 'transparent',
-        gap: 6,
-    },
-    themeOptionText: {
-        fontSize: 13,
-        fontWeight: '600',
-    },
-    inputContainer: {
-        width: '100%',
-        marginBottom: 24,
-        gap: 12,
-    },
-    modalInput: {
-        backgroundColor: '#D38C9D', // Blush
-        borderRadius: 12,
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        fontSize: 15,
-        color: '#4A2C35', // Mauve
-        borderWidth: 1,
-        borderColor: '#D38C9D',
-    },
-    modalBackdrop: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.4)',
-    },
-    modalCenterContainer: {
-        ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
-        paddingHorizontal: 24,
-    },
-    logoutModalCard: {
-        width: '100%',
-        backgroundColor: '#FBEAD6', // Champagne
-        borderRadius: 24,
         padding: 24,
+    },
+    modalContent: {
+        width: '100%',
+        maxWidth: 340,
+        borderRadius: 32,
+        padding: 28,
         alignItems: 'center',
-        shadowColor: '#D38C9D',
+        elevation: 10,
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.1,
         shadowRadius: 20,
-        elevation: 10,
     },
-    logoutIconCircle: {
+    iconCircle: {
         width: 60,
         height: 60,
         borderRadius: 30,
-        backgroundColor: '#D38C9D', // Blush
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
     },
-    logoutTitle: {
-        fontSize: 20,
-        fontWeight: '700',
-        color: '#4A2C35', // Heading Mauve
-        marginBottom: 8,
-    },
-    logoutSubtitle: {
-        fontSize: 14,
-        color: '#7A5560', // Body Mauve
+    modalTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        marginBottom: 20,
         textAlign: 'center',
-        marginBottom: 24,
-        lineHeight: 20,
+        fontFamily: Typography.h1,
     },
-    logoutButtonsRow: {
+    inputGroup: {
+        width: '100%',
+        gap: 12,
+        marginBottom: 24,
+    },
+    modalInput: {
+        height: 56,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        paddingHorizontal: 16,
+        fontSize: 16,
+        color: '#4A2B2B',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.08)',
+    },
+    warningText: {
+        fontSize: 15,
+        color: '#666',
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: 28,
+        paddingHorizontal: 10,
+    },
+    modalActions: {
         flexDirection: 'row',
         gap: 12,
+        width: '100%',
     },
-    logoutCancelButton: {
+    cancelBtn: {
         flex: 1,
-        height: 50,
-        borderRadius: 14,
-        backgroundColor: '#D38C9D', // Blush
+        height: 56,
+        borderRadius: 18,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    logoutCancelText: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#4A2C35', // Mauve
-    },
-    logoutConfirmButton: {
+    saveBtn: {
         flex: 1,
-        height: 50,
-        borderRadius: 14,
-        backgroundColor: '#D94F3D',
+        height: 56,
+        borderRadius: 18,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#D94F3D',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
         elevation: 4,
+        shadowColor: '#FF5800',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
     },
-    logoutConfirmText: {
-        fontSize: 15,
-        fontWeight: '600',
+    deleteBtn: {
+        flex: 1,
+        height: 56,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        elevation: 4,
+        shadowColor: '#E53935',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+    },
+    confirmBtn: {
+        flex: 1,
+        height: 56,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    btnTextWhite: {
         color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    logoutModalContent: {
+        width: '100%',
+        maxWidth: 340,
+        borderRadius: 32,
+        padding: 24,
+        alignItems: 'center',
+    },
+    logoutIconBox: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.05)',
+    },
+    logoutModalTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        marginBottom: 12,
+        textAlign: 'center',
+        fontFamily: Typography.h1,
+    },
+    logoutModalSubtitle: {
+        fontSize: 15,
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: 28,
+        paddingHorizontal: 10,
+        fontFamily: Typography.body,
     },
 });
 
+export default ProfilePanel;

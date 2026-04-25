@@ -1,14 +1,23 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
 import api from './api';
 
-type AuthUser = {
+export type AuthUser = {
   id: number;
   firstName: string;
   lastName: string;
+  name?: string;
   email: string;
   contactNumber: string;
+  role?: 'customer' | 'rider' | 'admin' | 'cashier';
+  branchId?: number | null;
+  branchName?: string | null;
+  riderId?: number | null;
+  avatarId?: number; // 1, 2, 3, or 4
+  profilePictureUrl?: string | null;
 };
+
 
 type SignupPayload = {
   firstName: string;
@@ -40,28 +49,63 @@ type VerifyEmailCodeResponse = {
 
 const mapAuthUser = (user: any, emailFallback = ''): AuthUser => ({
   id: user?.id || 0,
-  firstName: user?.first_name || user?.firstName || user?.name?.split(' ')?.[0] || '',
-  lastName: user?.last_name || user?.lastName || user?.name?.split(' ')?.slice(1).join(' ') || '',
+  firstName: user?.first_name || '',
+  lastName: user?.last_name || '',
+  name: user?.name || '',
   email: user?.email || emailFallback,
-  contactNumber: user?.mobile_number || user?.contact_number || user?.contactNumber || '',
+  contactNumber: user?.role === 'rider' ? (user?.phone || '') : (user?.mobile_number || ''),
+  role: user?.role || 'customer',
+  branchId: user?.branch_id || user?.branchId || null,
+  branchName: user?.branch?.name || user?.branchName || user?.branch_name || null,
+  riderId: user?.role === 'rider' ? user?.id : null,
+  avatarId: user?.avatar_id || user?.avatarId || 1, 
+  profilePictureUrl: user?.role === 'rider' ? null : (user?.profile_photo_path || null),
 });
 
 export const fetchCurrentUser = async (): Promise<AuthUser> => {
   try {
     const response = await api.get('user');
-    const data = response.data;
+    const resData = response.data?.data || response.data;
     // Handle nested user object if present (Laravel usually returns { user: {...} } or just {...})
-    const userData = data.user || data;
+    const userData = resData?.user || resData;
     return mapAuthUser(userData);
-  } catch (error) {
-    if (axios.isAxiosError(error) && error.response) {
-      const msg = error.response.data?.message || error.response.data?.error || 'Failed to fetch user profile.';
-      throw new Error(msg);
+  } catch (error: any) {
+    // Log the detailed error for debugging
+    let role: any = 'customer';
+    let phone: string = '';
+    let name: string = 'Valued User';
+
+    // 🛡️ RECOVERY LOGIC: Check for cached profile BEFORE logging big errors
+    try {
+      const cached = await AsyncStorage.getItem('user_profile');
+      if (cached) {
+        const profile = JSON.parse(cached);
+        role = profile.role || 'customer';
+        phone = profile.contactNumber || profile.phone || profile.mobile_number || '';
+        name = profile.name || `${profile.firstName || ''} ${profile.lastName || ''}`.trim() || 'Valued User';
+        
+        console.warn(`[AuthAPI] Server 500 on /user. Proceeding with local profile for: ${name}`);
+        
+        return {
+          id: profile.id || 0,
+          firstName: profile.firstName || name.split(' ')[0],
+          lastName: profile.lastName || (name.split(' ')[1] || (role === 'rider' ? 'Rider' : 'User')),
+          email: profile.email || '...',
+          contactNumber: phone,
+          role: role as any,
+          avatarId: profile.avatarId || 1,
+          profilePictureUrl: profile.profilePictureUrl || null
+        };
+      }
+    } catch (e) {}
+
+    // If we get here, it means we have NO local data, so we log the full error
+    if (error.response) {
+      console.error('[API-DEBUG] Profile Fetch Failed with Status:', error.response.status);
+      console.error('[API-DEBUG] Response Data:', JSON.stringify(error.response.data));
     }
-    if (axios.isAxiosError(error) && !error.response) {
-      throw new Error('Network error while fetching user profile.');
-    }
-    throw new Error('An unexpected error occurred while fetching user profile.');
+
+    throw error;
   }
 };
 
@@ -71,14 +115,14 @@ export const fetchCurrentUser = async (): Promise<AuthUser> => {
  */
 export const refreshToken = async (): Promise<boolean> => {
   try {
-    const currentToken = await AsyncStorage.getItem('auth_token');
+    const currentToken = await SecureStore.getItemAsync('auth_token');
     if (!currentToken) return false;
 
     const response = await api.post('token/refresh');
     const newToken = response.data?.token;
 
     if (newToken) {
-      await AsyncStorage.setItem('auth_token', newToken);
+      await SecureStore.setItemAsync('auth_token', newToken);
       console.log('[Auth] Token refreshed successfully.');
       return true;
     }
@@ -101,12 +145,12 @@ export const signupUser = async (payload: SignupPayload): Promise<AuthUser> => {
       verification_proof: payload.verificationProof,
     });
 
-    const data = response.data;
-    const user = data.user || data;
-    const token = data.token || data.access_token;
+    const resData = response.data?.data || response.data;
+    const user = resData?.user || resData;
+    const token = resData?.token || resData?.access_token;
 
     if (token) {
-      await AsyncStorage.setItem('auth_token', token);
+      await SecureStore.setItemAsync('auth_token', token);
     }
 
     return mapAuthUser(user, payload.email);
@@ -129,12 +173,12 @@ export const loginUser = async (payload: LoginPayload): Promise<AuthUser> => {
       password: payload.password,
     });
 
-    const data = response.data;
-    const user = data.user || data;
-    const token = data.token || data.access_token;
+    const resData = response.data?.data || response.data;
+    const user = resData?.user || resData;
+    const token = resData?.token || resData?.access_token;
 
     if (token) {
-      await AsyncStorage.setItem('auth_token', token);
+      await SecureStore.setItemAsync('auth_token', token);
     }
 
     // Return the user from the login response directly
@@ -169,6 +213,69 @@ export const loginUser = async (payload: LoginPayload): Promise<AuthUser> => {
       throw new Error('Network error, please check your connection.');
     }
     throw new Error('An unexpected error occurred during login.');
+  }
+};
+
+export const mobileLogin = async (payload: LoginPayload): Promise<AuthUser> => {
+  try {
+    // Specifically hit the mobile login endpoint
+    const { getApiBaseUrl } = await import('./api');
+    console.log('[DEBUG] Login URL:', `${getApiBaseUrl()}login`);
+    console.log('[DEBUG] Request body:', JSON.stringify(payload));
+
+    const response = await api.post('login', {
+      email: payload.email,
+      password: payload.password,
+    });
+
+    const resData = response.data?.data || response.data;
+    const user = resData?.user || resData;
+    const token = resData?.token || resData?.access_token;
+
+    if (token) {
+      await SecureStore.setItemAsync('auth_token', token);
+    }
+
+    const mappedUser = mapAuthUser(user, payload.email);
+
+    // 🛡️ SECURITY: Immediately update the local cache for the new user
+    await AsyncStorage.setItem('user_profile', JSON.stringify(mappedUser));
+    await AsyncStorage.setItem('user_role', mappedUser.role || 'customer');
+
+    if (mappedUser.role === 'rider') {
+      // Automatically set status to available on login
+      // Import updateRiderStatus dynamically to avoid circular dependencies if any
+      const { updateRiderStatus } = await import('./rider_api');
+      await updateRiderStatus('available');
+    }
+
+    return mappedUser;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+
+      if (status === 401) {
+        throw new Error('Invalid login details.');
+      }
+
+      if (status === 403) {
+        // Handle "Account disabled" vs "Unauthorized access"
+        const msg = data?.message || '';
+        if (msg.toLowerCase().includes('disabled') || msg.toLowerCase().includes('inactive')) {
+          throw new Error('Account disabled, contact admin.');
+        }
+        throw new Error('Unauthorized access.');
+      }
+
+      const msg = data?.message || data?.error || `Login failed (Status: ${status}).`;
+      throw new Error(msg);
+    }
+    if (axios.isAxiosError(error) && !error.response) {
+      console.error('[RiderLogin] Network Error:', error.message, error.config?.url);
+      throw new Error(`Unable to connect (${error.message}). URL: ${error.config?.url}`);
+    }
+    throw new Error('An unexpected error occurred during rider login.');
   }
 };
 
@@ -317,7 +424,7 @@ export const requestPaymentLink = async (
 
   // User requested any valid number should work for linking flow
   // We just simulate that all numbers are registered for this demo
-  
+
   return {
     ok: true,
     message: `OTP sent to ${accountNumber}`,
@@ -356,5 +463,35 @@ export const updateUserProfile = async (payload: { firstName: string; lastName: 
       throw new Error(msg);
     }
     throw new Error('An unexpected error occurred while updating your profile.');
+  }
+};
+
+/**
+ * Change the user's password.
+ * POST /profile/change-password
+ */
+export const updateProfilePassword = async (payload: any): Promise<void> => {
+  try {
+    await api.post('profile/change-password', payload);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      throw new Error(error.response.data?.message || 'Failed to change password.');
+    }
+    throw error;
+  }
+};
+
+/**
+ * Permanently delete the user's account.
+ * DELETE /profile/delete
+ */
+export const deleteAccount = async (): Promise<void> => {
+  try {
+    await api.delete('profile/delete');
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      throw new Error(error.response.data?.message || 'Failed to delete account.');
+    }
+    throw error;
   }
 };
