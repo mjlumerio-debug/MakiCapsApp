@@ -30,15 +30,19 @@ type OrderStep = 'pending' | 'preparing' | 'in_transit' | 'delivered';
 const STEPS: { key: OrderStep; label: string; icon: string; iconLib: 'feather' | 'ionicons' | 'mci'; description: string }[] = [
     { key: 'pending', label: 'Pending', icon: 'clock', iconLib: 'feather', description: 'Your order has been received' },
     { key: 'preparing', label: 'Preparing', icon: 'restaurant-outline', iconLib: 'ionicons', description: 'The kitchen is preparing your food' },
-    { key: 'in_transit', label: 'In Transit', icon: 'moped', iconLib: 'mci', description: 'Your order is on its way' },
+    { key: 'in_transit', label: 'Out for delivery', icon: 'moped', iconLib: 'mci', description: 'Your order is on its way to you' },
     { key: 'delivered', label: 'Delivered', icon: 'check-circle', iconLib: 'feather', description: 'Your order has been delivered!' },
 ];
 
 const STATUS_DISPLAY_MAP: Record<string, OrderStep> = {
     pending: 'pending',
     preparing: 'preparing',
+    ready_for_pickup: 'preparing',
+    assigned_to_rider: 'preparing',
+    picked_up: 'in_transit',
     in_transit: 'in_transit',
     delivered: 'delivered',
+    cancelled: 'delivered',
 };
 
 function getStepIndex(status: string): number {
@@ -191,9 +195,8 @@ export default function TrackOrderScreen() {
     }, []);
 
     // ── Fetch status from backend ──
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     const fetchStatus = useCallback(async () => {
-        if (!backendOrderId) {
+        if (!backendOrderId || isNaN(backendOrderId)) {
             setIsLoading(false);
             return;
         }
@@ -238,7 +241,7 @@ export default function TrackOrderScreen() {
         fetchStatus(); // Initial fetch
 
         if (backendOrderId && currentStatus !== 'delivered') {
-            pollingRef.current = setInterval(fetchStatus, 8000);
+            pollingRef.current = setInterval(fetchStatus, 4000); // Increased polling frequency for true realtime feel
         }
 
         return () => {

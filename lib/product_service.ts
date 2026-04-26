@@ -62,10 +62,15 @@ const extractCategories = (data: any): any[] => {
 
 // ─── Production Fetch Logic ──────────────────────────────────────────
 
-export const fetchGlobalCatalog = async () => {
+export const fetchGlobalCatalog = async (categoryId?: string | number) => {
     try {
+        const params: any = { t: Date.now() };
+        if (categoryId && categoryId !== 'all') {
+            params.category_id = categoryId;
+        }
+
         const [prodRes, catRes] = await Promise.all([
-            api.get(`products?t=${Date.now()}`),
+            api.get(`products`, { params }),
             api.get(`categories?t=${Date.now()}`).catch(() => ({ data: [] }))
         ]);
 
@@ -100,10 +105,15 @@ export const fetchGlobalCatalog = async () => {
     }
 };
 
-export const fetchBranchProducts = async (branchId: number) => {
+export const fetchBranchProducts = async (branchId: number, categoryId?: string | number) => {
     try {
+        const params: any = { branch_id: branchId, t: Date.now() };
+        if (categoryId && categoryId !== 'all') {
+            params.category_id = categoryId;
+        }
+
         const [prodRes, catRes] = await Promise.all([
-            api.get(`products`, { params: { branch_id: branchId, t: Date.now() } }),
+            api.get(`products`, { params }),
             api.get(`categories?t=${Date.now()}`).catch(() => ({ data: [] }))
         ]);
 

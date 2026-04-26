@@ -34,6 +34,8 @@ type FoodDetailModalProps = {
     onToggleFavorite: (id: string) => void;
     onAddToCart: (item: Food, quantity: number) => void;
     onCheckout: () => void;
+    onSelectAddress?: () => void;
+    onStockLimit?: (maxQuantity: number, currentInCart: number, itemName: string) => void;
     catalogMode?: CatalogMode;
 };
 
@@ -45,6 +47,8 @@ export default function FoodDetailModal({
     onToggleFavorite,
     onAddToCart,
     onCheckout,
+    onSelectAddress,
+    onStockLimit,
     catalogMode = 'branch',
 }: FoodDetailModalProps) {
     const { colors, isDark } = useAppTheme();
@@ -126,7 +130,9 @@ export default function FoodDetailModal({
             return;
         }
         if (hasStockLimit && quantity > maxQuantity) {
-            Alert.alert('Stock Limit', `Only ${maxQuantity} servings available.`);
+            if (onStockLimit) {
+                onStockLimit(maxQuantity, 0, item.name);
+            }
             return;
         }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -220,12 +226,19 @@ export default function FoodDetailModal({
                                         <Text style={[styles.priceValue, { color: colors.primary }]}>{displayPrice}</Text>
                                     </View>
                                     {isGlobalMode ? (
-                                        <View style={styles.unavailableBanner}>
+                                        <TouchableOpacity 
+                                            activeOpacity={0.7}
+                                            style={styles.unavailableBanner}
+                                            onPress={() => {
+                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                onSelectAddress?.();
+                                            }}
+                                        >
                                             <Ionicons name="globe-outline" size={16} color={colors.primary} />
                                             <Text style={[styles.stockStatusText, { color: colors.primary }]}>
                                                 Select a delivery address to order
                                             </Text>
-                                        </View>
+                                        </TouchableOpacity>
                                     ) : !isAvailable ? (
                                         <View style={styles.unavailableBanner}>
                                             <Feather name="info" size={16} color="#FF6B6B" />
@@ -308,7 +321,9 @@ export default function FoodDetailModal({
                                             style={[styles.qtyBtnAdd, { backgroundColor: colors.primary }]}
                                             onPress={() => {
                                                 if (hasStockLimit && quantity >= stockCount) {
-                                                    Alert.alert('Stock Limit', `Only ${stockCount} servings available.`);
+                                                    if (onStockLimit) {
+                                                        onStockLimit(stockCount, quantity, item.name);
+                                                    }
                                                     return;
                                                 }
                                                 setQuantity(quantity + 1);
@@ -463,7 +478,7 @@ const styles = StyleSheet.create({
         color: '#FF6B6B',
     },
     descriptionContainer: {
-        marginTop: 20,
+        marginTop: 4,
         alignItems: 'flex-start',
         width: '100%',
     },
@@ -601,6 +616,7 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         borderRadius: 10,
         marginTop: 8,
+        alignSelf: 'flex-start',
     },
 });
 

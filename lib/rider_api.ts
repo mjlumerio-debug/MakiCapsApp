@@ -47,3 +47,55 @@ export const sendRiderHeartbeat = async (currentStatus: RiderOperationalStatus):
     return false;
   }
 };
+
+/**
+ * Strict Rider Workflow Endpoints
+ */
+
+export const acceptOrder = async (orderId: number) => {
+  const response = await api.post(`rider/orders/${orderId}/accept`);
+  return response.data;
+};
+
+export const pickupOrder = async (orderId: number) => {
+  const response = await api.post(`rider/orders/${orderId}/pickup`);
+  return response.data;
+};
+
+export const transitOrder = async (orderId: number) => {
+  const response = await api.post(`rider/orders/${orderId}/transit`);
+  return response.data;
+};
+
+export const deliverOrder = async (orderId: number, photoUri: string) => {
+  const formData = new FormData();
+  
+  // Create file object from uri
+  const filename = photoUri.split('/').pop() || 'proof.jpg';
+  const match = /\.(\w+)$/.exec(filename);
+  const type = match ? `image/${match[1]}` : `image/jpeg`;
+
+  formData.append('proof_of_delivery', {
+    uri: photoUri,
+    name: filename,
+    type,
+  } as any);
+
+  const response = await api.post(`rider/orders/${orderId}/deliver`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  
+  return response.data;
+};
+
+export const sendRiderLocation = async (latitude: number, longitude: number) => {
+  try {
+    const response = await api.post('rider/location', { latitude, longitude });
+    return response.data;
+  } catch (error) {
+    console.debug('[RiderAPI] Location ping failed:', error);
+    return null;
+  }
+};

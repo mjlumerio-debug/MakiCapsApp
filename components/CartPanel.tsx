@@ -9,13 +9,14 @@ import React, { useMemo, useState } from 'react';
 import { Alert, FlatList, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useDerivedValue, withTiming } from 'react-native-reanimated';
 import { useAppTheme } from '@/state/contexts/ThemeContext';
+import StockLimitModal from './StockLimitModal';
 
 type CartPanelProps = {
     bottomPadding: number;
     onCheckout: () => void;
 };
 
-function CartItemRow({ item, food, dispatch, colors }: { item: any; food: any; dispatch: any; colors: any }) {
+function CartItemRow({ item, food, dispatch, colors, onStockLimit }: { item: any; food: any; dispatch: any; colors: any; onStockLimit: (max: number, inCart: number, name: string) => void }) {
     const displayFood = food || item;
     const name = displayFood.name || displayFood.title;
     if (!name) return null;
@@ -76,7 +77,7 @@ function CartItemRow({ item, food, dispatch, colors }: { item: any; food: any; d
                                 if (!hasStockLimit || item.quantity < maxQuantity) {
                                     dispatch({ type: 'UPDATE_QUANTITY', payload: { id: item.id, quantity: item.quantity + 1 } });
                                 } else {
-                                    Alert.alert('Stock Limit', `Only ${maxQuantity} servings available.`);
+                                    onStockLimit(maxQuantity, item.quantity, name);
                                 }
                             }}
                         >
@@ -107,6 +108,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
     const isGlobalMode = catalogMode === 'global' || !isServiceable;
 
     const [showClearCartModal, setShowClearCartModal] = useState(false);
+    const [stockLimitModal, setStockLimitModal] = useState<{ visible: boolean; maxQuantity: number; currentInCart: number; itemName: string }>({ visible: false, maxQuantity: 0, currentInCart: 0, itemName: '' });
 
     const checkedItems = useMemo(() => cartItems.filter(item => item.checked), [cartItems]);
     const allChecked = cartItems.length > 0 && checkedItems.length === cartItems.length;
@@ -197,6 +199,7 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                             food={null}
                             dispatch={dispatch}
                             colors={colors}
+                            onStockLimit={(max, inCart, name) => setStockLimitModal({ visible: true, maxQuantity: max, currentInCart: inCart, itemName: name })}
                         />
                     )}
                     contentContainerStyle={styles.listContent}
@@ -296,6 +299,14 @@ export default function CartPanel({ bottomPadding, onCheckout }: CartPanelProps)
                     </View>
                 </View>
             </Modal>
+
+            <StockLimitModal
+                visible={stockLimitModal.visible}
+                onClose={() => setStockLimitModal(prev => ({ ...prev, visible: false }))}
+                maxQuantity={stockLimitModal.maxQuantity}
+                currentInCart={stockLimitModal.currentInCart}
+                itemName={stockLimitModal.itemName}
+            />
         </View>
     );
 }

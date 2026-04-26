@@ -22,6 +22,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initRealtime } from '@/lib/realtime';
 import { SessionWatcher } from '@/components/SessionWatcher';
+import GlobalAlertHandler from '@/components/GlobalAlertHandler';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -83,6 +84,7 @@ function InnerLayout() {
         </Stack>
 
         <SessionWatcher />
+        <GlobalAlertHandler />
         
         {/* Theme Transition Overlay */}
         <Animated.View style={transitionOverlayStyle} pointerEvents="none" />

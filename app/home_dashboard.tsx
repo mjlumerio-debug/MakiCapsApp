@@ -36,6 +36,8 @@ import {
 } from 'react-native';
 import Animated, {
   Easing,
+  FadeIn,
+  Layout,
   useAnimatedStyle,
   useSharedValue,
   withTiming
@@ -225,18 +227,7 @@ export default function HomeDashboard() {
     }
   }, [products, activeAddressId]);
 
-  // 🎯 API-DRIVEN REFRESH Rule
-  const handleRefresh = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const mode = isGlobalMode ? 'global' : 'branch';
-    const bId = selectedBranch?.id;
-    await refreshMenuStore(mode, bId);
-  }, [isGlobalMode, selectedBranch]);
 
-  // Refresh when location/branch changes or on focus
-  useEffect(() => {
-    handleRefresh();
-  }, [activeAddressId, selectedBranch?.id, isGlobalMode]);
 
   const cardWidth = useMemo(() => {
     const horizontalPadding = 40;
@@ -244,6 +235,21 @@ export default function HomeDashboard() {
     const available = width - horizontalPadding - totalGap;
     return Math.max(140, available / 2 - 4);
   }, [width]);
+
+  // 🎯 API-DRIVEN REFRESH Rule
+  const handleRefresh = useCallback(async (catId?: string | number | object) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const mode = isGlobalMode ? 'global' : 'branch';
+    const bId = selectedBranch?.id;
+    // If catId is an event (from Pull to Refresh) or not provided, use activeCategory
+    const targetCatId = (typeof catId === 'object' || catId === undefined) ? activeCategory : catId;
+    await refreshMenuStore(mode, bId, targetCatId === 'all' ? undefined : (targetCatId as string | number));
+  }, [isGlobalMode, selectedBranch, activeCategory]);
+
+  // Refresh when location/branch or category changes
+  useEffect(() => {
+    handleRefresh(activeCategory);
+  }, [activeCategory, isGlobalMode, selectedBranch]);
 
   const handleToggleFavorite = useCallback((foodId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -357,13 +363,7 @@ export default function HomeDashboard() {
   const filteredFoods = useMemo(() => {
     let list = products;
 
-    if (activeCategory !== 'all') {
-      const activeCatObj = categoryData.find(c => c.id === activeCategory);
-      list = list.filter(f => 
-        String(f.category_id_) === String(activeCategory) || 
-        (activeCatObj && f.category_name.toLowerCase().trim() === activeCatObj.name.toLowerCase().trim())
-      );
-    }
+    // ⚡ Backend handles category filtering. We only handle local search/sort/price filters here.
     if (search.trim()) {
       const s = search.toLowerCase();
       list = list.filter(f => f.name.toLowerCase().includes(s) || f.category_name.toLowerCase().includes(s));
@@ -607,7 +607,7 @@ export default function HomeDashboard() {
             </ScrollView>
           </View>
 
-          {products.length === 0 && !isLoadingGPS ? (
+          {products.length === 0 && !isLoadingGPS && !isRefreshing ? (
             <View style={styles.emptyProducts}>
               <Feather name="map-pin" size={40} color="#DCCDBE" style={{ marginBottom: 16 }} />
               <Text style={styles.emptyTitle}>No products available in your area</Text>
@@ -615,22 +615,26 @@ export default function HomeDashboard() {
             </View>
           ) : (
             <RNAnimated.FlatList
-              key={`grid-2`} // Force re-mount for numColumns change
+              key="grid-2-stable" 
               data={filteredFoods}
               keyExtractor={(item) => item.id}
               refreshing={isRefreshing}
               onRefresh={handleRefresh}
               renderItem={({ item }) => (
-                <FoodCard
-                  item={item}
-                  width={cardWidth}
-                  isFavorite={favorites.includes(item.id)}
-                  isOpen={!isGlobalMode && isServiceable}
-                  catalogMode={catalogMode}
-                  onToggleFavorite={handleToggleFavorite}
-                  onAddToCart={handleAddToCart}
-                  onPress={handleFoodPress}
-                />
+                <Animated.View 
+                  entering={FadeIn.duration(400)}
+                >
+                  <FoodCard
+                    item={item}
+                    width={cardWidth}
+                    isFavorite={favorites.includes(item.id)}
+                    isOpen={!isGlobalMode && isServiceable}
+                    catalogMode={catalogMode}
+                    onToggleFavorite={handleToggleFavorite}
+                    onAddToCart={handleAddToCart}
+                    onPress={handleFoodPress}
+                  />
+                </Animated.View>
               )}
               numColumns={2}
               showsVerticalScrollIndicator={false}

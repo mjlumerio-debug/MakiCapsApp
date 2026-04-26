@@ -283,7 +283,11 @@ export default function LoginScreen() {
             }));
 
             try {
-                await detectBranchAndAddressAfterLogin();
+                // 🛡️ PERSISTENCE GUARD: If the guest already has a branch selected, don't force-detect and clear the cart.
+                const currentStore = require('@/lib/ui_store');
+                if (!currentStore.state.selectedBranch) {
+                    await detectBranchAndAddressAfterLogin();
+                }
             } catch (locationError) {
                 console.log('Location/branch auto-detection skipped:', locationError);
             }
@@ -312,7 +316,7 @@ export default function LoginScreen() {
                 setShowSuccessModal(false);
                 // Redirect based on role
                 if (user.role === 'rider') {
-                    router.replace('/rider/dashboard' as any);
+                    router.replace('/rider/(tabs)' as any);
                 } else {
                     router.replace('/home_dashboard');
                 }
@@ -369,9 +373,6 @@ export default function LoginScreen() {
                                 <View style={styles.socialRow}>
                                     <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <AntDesign name="google" size={22} color="#DB4437" />
-                                    </TouchableOpacity>
-                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
-                                        <FontAwesome name="facebook" size={22} color="#4267B2" />
                                     </TouchableOpacity>
                                     <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <Ionicons name="logo-apple" size={22} color={colors.heading} />

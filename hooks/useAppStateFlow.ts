@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { useLocation } from '@/state/contexts/LocationContext';
 import { useBranch } from '@/state/contexts/BranchContext';
 import { useCart } from '@/state/contexts/CartContext';
-import { isAddressInServiceArea, type Address, type SelectedBranch } from '@/lib/ui_store';
+import { isAddressInServiceArea, type Address, type SelectedBranch, showGlobalAlert } from '@/lib/ui_store';
 import { refreshMenuStore } from '@/lib/menu_store';
 import { getDistanceKm } from '@/lib/google_location';
 import api from '@/lib/api';
@@ -91,7 +91,12 @@ export const useAppStateFlow = () => {
         if (!branch.isManualSelection) {
           if (branch.selectedBranch && branch.selectedBranch.id !== nearestAvailable.id && cart.items.length > 0) {
             cartDispatch({ type: 'CLEAR_CART' });
-            Alert.alert("Location Changed", "Your cart has been cleared because you moved to a different branch service area.");
+            showGlobalAlert(
+              "Location Changed", 
+              "Your cart has been cleared because you moved to a different branch service area.",
+              'out_of_range',
+              () => require('expo-router').router.replace('/home_dashboard')
+            );
           }
           branchDispatch({ type: 'SET_BRANCH', payload: nearestAvailable });
           await refreshMenuStore('branch', nearestAvailable.id);
@@ -108,7 +113,12 @@ export const useAppStateFlow = () => {
         if (cart.items.length > 0) {
            cartDispatch({ type: 'CLEAR_CART' });
            if (previouslyHadBranch) {
-             Alert.alert("Outside Delivery Area", "Your cart has been cleared because your current location is outside our delivery range.");
+             showGlobalAlert(
+               "Outside Delivery Area", 
+               "Your cart has been cleared because your current location is outside our delivery range.",
+               'out_of_range',
+               () => require('expo-router').router.replace('/home_dashboard')
+             );
            }
         }
         await refreshMenuStore('global');
@@ -158,7 +168,12 @@ export const useAppStateFlow = () => {
       branchDispatch({ type: 'SET_CATALOG_MODE', payload: 'branch' });
       if (currentId && nextId && currentId !== nextId && cart.items.length > 0) {
         cartDispatch({ type: 'CLEAR_CART' });
-        Alert.alert("Branch Switched", "Your cart has been cleared because you switched to a different branch.");
+        showGlobalAlert(
+          "Branch Switched", 
+          "Your cart has been cleared because you switched to a different branch.",
+          'generic',
+          () => require('expo-router').router.replace('/home_dashboard')
+        );
       }
       if (nextId) {
         cartDispatch({ type: 'SET_BRANCH_ID', payload: nextId });

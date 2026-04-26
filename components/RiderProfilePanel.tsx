@@ -28,23 +28,19 @@ export function RiderProfilePanel() {
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
     >
-      {/* Rider Info Header */}
       <View style={styles.header}>
         <View style={[styles.avatarPlaceholder, { backgroundColor: colors.primary + '10' }]}>
           <Feather name="user" size={40} color={colors.primary} />
         </View>
-        <Text style={[styles.name, { color: colors.heading }]}>{user?.firstName || 'Rider Partner'}</Text>
+        <Text style={[styles.name, { color: colors.heading }]}>{user?.name || (user?.firstName ? `${user.firstName} ${user.lastName}` : 'Rider Partner')}</Text>
         <Text style={[styles.role, { color: colors.text, opacity: 0.6 }]}>Professional Delivery Partner</Text>
       </View>
-
-      {/* Information Section */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Account Information</Text>
-        
         <InfoRow 
             icon="user" 
             label="Full Name" 
-            value={user?.firstName || '---'} 
+            value={user?.name || (user?.firstName ? `${user.firstName} ${user.lastName}` : '---')} 
             colors={colors} 
         />
         <InfoRow 
@@ -59,7 +55,6 @@ export function RiderProfilePanel() {
             value={user?.contactNumber || '---'} 
             colors={colors} 
         />
-        
         {!!user?.branchName && (
             <InfoRow 
                 icon="map-pin" 
@@ -70,11 +65,8 @@ export function RiderProfilePanel() {
             />
         )}
       </View>
-
-      {/* Rider Specific Actions */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Rider Tools</Text>
-        
         <MenuButton 
           icon="list" 
           title="Delivery History" 
@@ -94,8 +86,6 @@ export function RiderProfilePanel() {
           colors={colors} 
         />
       </View>
-
-      {/* Logout Button */}
       <TouchableOpacity 
         style={[styles.logoutButton, { borderColor: colors.primary + '30' }]} 
         onPress={handleLogout}

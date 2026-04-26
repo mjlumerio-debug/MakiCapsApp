@@ -300,9 +300,6 @@ export default function SignupScreen() {
                                         <AntDesign name="google" size={22} color="#DB4437" />
                                     </TouchableOpacity>
                                     <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
-                                        <FontAwesome name="facebook" size={22} color="#4267B2" />
-                                    </TouchableOpacity>
-                                    <TouchableOpacity style={[styles.socialIconButton, { backgroundColor: colors.background }]}>
                                         <Ionicons name="logo-apple" size={22} color={colors.heading} />
                                     </TouchableOpacity>
                                 </View>

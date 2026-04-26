@@ -692,7 +692,13 @@ export default function NewAddressScreen() {
 
     const handleSelectDeliveryAddress = () => {
         if (!fullAddress || isFetchingAddress) return;
-        setSelectedPinAddress(stripPlusCode(fullAddress));
+        const stripped = stripPlusCode(fullAddress);
+        setSelectedPinAddress(stripped);
+        
+        // AUTO-TRIGGER DETAILS MODAL for a smoother 1-tap flow
+        setTimeout(() => {
+            setShowConfirmSaveModal(true);
+        }, 100);
     };
 
     const handleAddDetails = () => {
@@ -1127,23 +1133,25 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#F3F4F6',
     },
-    selectBtn: {
-        flex: 1,
-        height: 56,
-        borderRadius: 16,
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-        elevation: 5,
-    },
-    selectBtnText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: '800',
-        fontFamily: Typography.button,
-    },
+  selectBtn: {
+    flex: 1,
+    height: 56,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  selectBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '900',
+    fontFamily: Typography.button,
+    letterSpacing: 0.5,
+  },
     modalOverlay: {
         flex: 1,
         justifyContent: 'flex-end',

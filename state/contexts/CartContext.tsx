@@ -7,7 +7,7 @@ const CartContext = createContext<{
   dispatch: React.Dispatch<CartAction>;
 } | undefined>(undefined);
 
-const STORAGE_KEY_CART = 'maki_cart_v2';
+const STORAGE_KEY_CART = 'maki_cart_items';
 
 export const CartProvider = ({ children }: { children: ReactNode }) => {
   const [state, dispatch] = useReducer(cartReducer, cartInitialState);

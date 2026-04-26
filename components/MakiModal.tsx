@@ -173,10 +173,13 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.05)',
     },
     cancelBtnText: {
         fontSize: 15,
         fontFamily: Typography.button,
+        fontWeight: '700',
     },
     confirmBtn: {
         flex: 1,
@@ -184,7 +187,11 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
-        elevation: 2,
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
     },
     successBtn: {
         // backgroundColor handled inline
@@ -196,5 +203,6 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontFamily: Typography.button,
         color: '#FFFFFF',
+        fontWeight: '800',
     },
 });

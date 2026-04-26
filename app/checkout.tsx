@@ -1,6 +1,6 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -22,19 +22,20 @@ import Animated, {
     withTiming
 } from 'react-native-reanimated';
 import { useMenuStore, resolveProductImage } from '../lib/menu_store';
-import { addOrder, formatAddressForDisplay, Order, useUiStore } from '../lib/ui_store';
+import { addOrder, formatAddressForDisplay, Order, useUiStore, showGlobalAlert } from '../lib/ui_store';
 import { useLocation } from '@/state/contexts/LocationContext';
 import { useBranch } from '@/state/contexts/BranchContext';
 import { useCart } from '@/state/contexts/CartContext';
 import { getDistanceKm } from '../lib/google_location';
 import { submitOrder, validateCartStock, type OrderPayload } from '../lib/order_api';
 import DeliveryDetailsModal from '../components/DeliveryDetailsModal';
+import StockLimitModal from '../components/StockLimitModal';
+import OutOfRangeModal from '../components/OutOfRangeModal';
 import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '@/state/contexts/ThemeContext';
 import { StatusBar } from 'expo-status-bar';
 
 const { height } = Dimensions.get('window');
-const DELIVERY_FEE = 38.00;
 
 // TypeScript Interfaces
 interface CheckoutItem {
@@ -118,6 +119,42 @@ export default function CheckoutScreen() {
     const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
     const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false);
     const [userProfile, setUserProfile] = useState<{ firstName: string; lastName: string; email: string; contactNumber: string } | null>(null);
+    const [stockLimitModal, setStockLimitModal] = useState<{ visible: boolean; maxQuantity: number; currentInCart: number; itemName: string }>({ visible: false, maxQuantity: 0, currentInCart: 0, itemName: '' });
+    
+    // ── Dynamic Delivery Fee States ──
+    const [deliveryFee, setDeliveryFee] = useState<number>(0);
+    const [distanceKm, setDistanceKm] = useState<number>(0);
+    const [isDeliverable, setIsDeliverable] = useState<boolean>(true);
+    const [checkingFee, setCheckingFee] = useState<boolean>(false);
+    const [deliveryError, setDeliveryError] = useState<string>('');
+    const hasTriggeredOutOfRange = useRef(false);
+
+    const fetchFee = async () => {
+        if (!activeAddress?.latitude || !activeAddress?.longitude || !selectedBranch?.id) return;
+        
+        setCheckingFee(true);
+        setDeliveryError('');
+        try {
+            const { checkDeliveryFee } = require('../lib/order_api');
+            const res = await checkDeliveryFee({
+                branch_id: selectedBranch.id,
+                latitude: activeAddress.latitude,
+                longitude: activeAddress.longitude
+            });
+            
+            setDeliveryFee(res.delivery_fee);
+            setDistanceKm(res.distance_km);
+            setIsDeliverable(res.is_deliverable);
+            if (!res.is_deliverable) {
+                setDeliveryError(res.message || 'Address out of delivery range.');
+            }
+        } catch (err) {
+            console.error('Check fee failed:', err);
+            setDeliveryError('Could not calculate delivery fee.');
+        } finally {
+            setCheckingFee(false);
+        }
+    };
 
     // Load user profile on mount
     React.useEffect(() => {
@@ -130,36 +167,46 @@ export default function CheckoutScreen() {
         return () => { isMounted = false; };
     }, []);
 
+    // ── Trigger Fee Check ──
+    React.useEffect(() => {
+        fetchFee();
+    }, [activeAddress?.latitude, activeAddress?.longitude, selectedBranch?.id]);
+
     // ── Address Serviceability Monitor ──
+    // Debounced: only fires once per location change cycle to avoid
+    // false negatives from API delays or rapid state transitions.
     React.useEffect(() => {
         if (!activeAddress || !selectedBranch) return;
+        if (checkingFee) {
+            // Still calculating — don't decide yet
+            return;
+        }
+        if (!isDeliverable && !hasTriggeredOutOfRange.current) {
+            // Mark as triggered so we don't re-fire on re-renders
+            hasTriggeredOutOfRange.current = true;
 
-        // 1. Calculate Distance
-        const distance = getDistanceKm(
-            activeAddress.latitude || 0,
-            activeAddress.longitude || 0,
-            selectedBranch.latitude || 0,
-            selectedBranch.longitude || 0
-        );
+            // 1. Clear cart BEFORE showing modal
+            cartDispatch({ type: 'CLEAR_CART' });
 
-        // 2. Check if out of range
-        const isOutOfRange = selectedBranch.delivery_radius_km && distance > selectedBranch.delivery_radius_km;
-        
-        if (isOutOfRange) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            Alert.alert(
-                "Outside Delivery Range",
-                `The selected address is outside the delivery range of ${selectedBranch.name}. Please select a different address or branch.`,
-                [
-                    { 
-                        text: "Return to Cart", 
-                        onPress: () => router.replace('/home_dashboard' as any) 
-                    }
-                ],
-                { cancelable: false }
+            // 2. Show professional global modal
+            showGlobalAlert(
+                "Outside Delivery Area",
+                deliveryError || 'Your cart has been cleared because your current location is outside our delivery range.',
+                'out_of_range',
+                () => {
+                    setTimeout(() => {
+                        if (router.dismissAll) router.dismissAll();
+                        router.replace('/home_dashboard' as any);
+                    }, 100);
+                }
             );
         }
-    }, [activeAddress?.id, selectedBranch?.id]);
+
+        // Reset the guard when deliverability restores (e.g. user changed address back)
+        if (isDeliverable) {
+            hasTriggeredOutOfRange.current = false;
+        }
+    }, [isDeliverable, checkingFee, activeAddress?.id, selectedBranch?.id]);
 
     // 3. Logic Functions
     const paymentCategories = ['Cash on Delivery', 'E-Wallet'];
@@ -180,7 +227,7 @@ export default function CheckoutScreen() {
                 const clamped = hasStockLimit ? Math.min(requested, maxQuantity) : requested;
 
                 if (hasStockLimit && requested > maxQuantity) {
-                    Alert.alert('Maximum available quantity reached', 'Maximum available quantity reached');
+                    setStockLimitModal({ visible: true, maxQuantity, currentInCart: item.quantity, itemName: item.title || 'Item' });
                 }
 
                 return {
@@ -205,41 +252,51 @@ export default function CheckoutScreen() {
         }, 0);
     };
 
-    const calculateTotal = () => calculateSubtotal() + DELIVERY_FEE;
+    const calculateTotal = () => calculateSubtotal() + deliveryFee;
 
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleProcessTransaction = async () => {
         // 1. Validation
-        if (!activeAddress) {
+        if (!activeAddress || !activeAddress.latitude || !activeAddress.longitude) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert("Missing Information", "Please select a delivery address first.");
+            showGlobalAlert(
+                "Incomplete Address",
+                "Your delivery address must include a pinned map location. Please update your address with a map pin.",
+                'generic'
+            );
             return;
         }
+
         if (!selectedBranch?.id) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert("Missing Information", "Please select a delivery branch first.");
+            showGlobalAlert("Missing Information", "Please select a delivery branch first.", 'generic');
             return;
         }
 
         // Distance Validation
-        if (activeAddress?.latitude && activeAddress?.longitude && selectedBranch?.latitude && selectedBranch?.longitude) {
+        if (activeAddress.latitude && activeAddress.longitude && selectedBranch?.latitude && selectedBranch?.longitude) {
             const distance = getDistanceKm(activeAddress.latitude, activeAddress.longitude, selectedBranch.latitude, selectedBranch.longitude);
             if (selectedBranch.delivery_radius_km && distance > selectedBranch.delivery_radius_km) {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-                Alert.alert("Outside Delivery Range", `Sorry, your selected address is ${distance.toFixed(1)}km away, which is outside our ${selectedBranch.delivery_radius_km}km delivery radius.`);
+                cartDispatch({ type: 'CLEAR_CART' });
+                showGlobalAlert(
+                    "Outside Delivery Area",
+                    "Your current location is outside our delivery range for this branch.",
+                    'out_of_range',
+                    () => router.replace('/home_dashboard' as any)
+                );
                 return;
             }
         }
 
         if (!selectedMethod && selectedCategory !== 'Cash on Delivery') {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert("Missing Information", "Please select a payment method.");
+            showGlobalAlert("Missing Information", "Please select a payment method.", 'generic');
             return;
         }
 
         if (menuItems.length === 0) {
-            Alert.alert("Empty Cart", "Your cart is empty.");
+            showGlobalAlert("Empty Cart", "Your cart is empty.", 'generic');
             return;
         }
 
@@ -252,10 +309,11 @@ export default function CheckoutScreen() {
 
         if (invalidItems.length > 0) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert(
+            showGlobalAlert(
                 "Items Unavailable", 
                 "Some items in your cart are no longer available or do not belong to the selected branch. Please update your cart to continue.",
-                [{ text: "OK", onPress: () => router.back() }]
+                'generic',
+                () => router.back()
             );
             return;
         }
@@ -267,7 +325,11 @@ export default function CheckoutScreen() {
         });
 
         if (hasExceededLocalStock) {
-            Alert.alert("Stock Limit Exceeded", "Some items exceed the available stock. Please adjust your quantities.");
+            const overItem = menuItems.find((item) => {
+                const mq = Number(item.max_quantity ?? item.stock ?? 0);
+                return mq > 0 && item.quantity > mq;
+            });
+            setStockLimitModal({ visible: true, maxQuantity: Number(overItem?.max_quantity ?? overItem?.stock ?? 0), currentInCart: overItem?.quantity ?? 0, itemName: overItem?.title || 'Item' });
             return;
         }
 
@@ -277,19 +339,25 @@ export default function CheckoutScreen() {
         const fullName = userProfile ? `${userProfile.firstName} ${userProfile.lastName}`.trim() : 'Customer';
         
         const orderPayload: OrderPayload = {
-            user_id: userId || undefined,
-            branch_id: selectedBranch.id,
-            customer_name: fullName,
-            mobile_number: userProfile?.contactNumber || '',
+            user_id: userId || null as any,
+            branch_id: Number(selectedBranch.id),
+            customer_name: fullName || 'Customer',
+            mobile_number: userProfile?.contactNumber || (userProfile as any)?.mobile_number || '',
             address: formattedActiveAddress || activeAddress.fullAddress,
+            latitude: activeAddress.latitude || 0,
+            longitude: activeAddress.longitude || 0,
+            landmark: activeAddress.subdivision || '',
+            notes: activeAddress.notes || '',
             items: menuItems.map(item => ({
-                product_id: parseInt(item.id, 10) || 0,
+                product_id: Number(item.id) || 0,
                 name: item.title,
                 quantity: item.quantity,
                 price: typeof item.price === 'string'
                     ? parseFloat(item.price.replace(/[^\d.]/g, ''))
                     : item.price,
             })),
+            distance_km: distanceKm || 0,
+            delivery_fee: deliveryFee || 0,
             total_amount: calculateTotal(),
             payment_method: selectedCategory === 'Cash on Delivery' ? 'cod' : (selectedMethod || 'e-wallet'),
         };
@@ -330,16 +398,19 @@ export default function CheckoutScreen() {
                 backendOrderId: result.order_id,
                 items: menuItems.reduce((acc, item) => acc + item.quantity, 0),
                 subtotal: `₱${calculateSubtotal().toFixed(2)}`,
-                deliveryFee: `₱${DELIVERY_FEE.toFixed(2)}`,
+                deliveryFee: `₱${deliveryFee.toFixed(2)}`,
                 totalPrice: `₱${calculateTotal().toFixed(2)}`,
                 title: menuItems.length > 1 ? `${firstItem.title} + ${menuItems.length - 1} more` : firstItem.title,
                 status: 'In Progress',
+                status_label: '⏳ Pending',
+                raw_status: 'pending',
                 date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
                 deliveryTime: 'Today, ' + new Date(Date.now() + 45 * 60000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
                 paymentMethod: selectedCategory === 'Cash on Delivery' ? 'Cash on Delivery' : (selectedMethod || 'E-Wallet'),
                 fullAddress: formattedActiveAddress || activeAddress.fullAddress,
                 itemsList: itemsList,
-                image: firstItem.image
+                image: firstItem.image,
+                _rawDate: Date.now()
             };
 
             // 5. Save order locally, clear cart, then navigate to tracking
@@ -348,21 +419,20 @@ export default function CheckoutScreen() {
             cartDispatch({ type: 'CLEAR_CART' });
 
             router.replace({
-                pathname: '/track-order',
+                pathname: '/my-orders',
                 params: {
-                    backendOrderId: String(result.order_id),
-                    orderId: orderId,
-                    totalPrice: `₱${calculateTotal().toFixed(2)}`,
+                    showReceiptId: String(result.order_id),
+                    justOrdered: 'true'
                 },
             } as any);
 
         } catch (error: any) {
             console.error('[Checkout] Order submission failed:', error);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert(
+            showGlobalAlert(
                 "Order Failed",
                 error?.message || "Could not place your order. Please check your connection and try again.",
-                [{ text: "OK" }]
+                'generic'
             );
         } finally {
             setIsSubmitting(false);
@@ -607,8 +677,14 @@ export default function CheckoutScreen() {
                         <Text style={[styles.summaryValue, { color: colors.heading }]}>₱{calculateSubtotal().toFixed(2)}</Text>
                     </View>
                     <View style={styles.summaryRow}>
-                        <Text style={[styles.summaryLabel, { color: colors.text }]}>Delivery fee</Text>
-                        <Text style={[styles.summaryValue, { color: colors.heading }]}>₱{DELIVERY_FEE.toFixed(2)}</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.text }]}>
+                            Delivery fee {distanceKm > 0 ? `(${distanceKm.toFixed(1)}km)` : ''}
+                        </Text>
+                        {checkingFee ? (
+                            <ActivityIndicator size="small" color={colors.primary} />
+                        ) : (
+                            <Text style={[styles.summaryValue, { color: colors.heading }]}>₱{deliveryFee.toFixed(2)}</Text>
+                        )}
                     </View>
                     <View style={[styles.divider, { backgroundColor: colors.primary + '1A' }]} />
                     <View style={[styles.summaryRow, { marginTop: 10, marginBottom: 15 }]}>
@@ -617,9 +693,13 @@ export default function CheckoutScreen() {
                     </View>
 
                     <TouchableOpacity 
-                        style={[styles.processBtn, { backgroundColor: colors.primary }, isSubmitting && styles.processBtnDisabled]}
+                        style={[
+                            styles.processBtn, 
+                            { backgroundColor: colors.primary }, 
+                            (isSubmitting || checkingFee || !isDeliverable) && styles.processBtnDisabled
+                        ]}
                         onPress={handleProcessTransaction}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || checkingFee || !isDeliverable}
                         activeOpacity={0.8}
                     >
                         {isSubmitting ? (
@@ -627,8 +707,12 @@ export default function CheckoutScreen() {
                                 <ActivityIndicator size="small" color="#FFFFFF" />
                                 <Text style={styles.processBtnText}>Placing Order...</Text>
                             </View>
+                        ) : checkingFee ? (
+                            <Text style={styles.processBtnText}>Checking Delivery Fee...</Text>
+                        ) : !isDeliverable ? (
+                            <Text style={[styles.processBtnText, { color: '#6B7280' }]}>Out of Range</Text>
                         ) : (
-                            <Text style={styles.processBtnText} numberOfLines={1} adjustsFontSizeToFit>Process Transaction</Text>
+                            <Text style={styles.processBtnText} numberOfLines={1} adjustsFontSizeToFit>Confirm Order • ₱{calculateTotal().toFixed(2)}</Text>
                         )}
                     </TouchableOpacity>
                 </View>
@@ -652,6 +736,16 @@ export default function CheckoutScreen() {
                     router.push('/addresses' as any);
                 }}
             />
+
+            <StockLimitModal
+                visible={stockLimitModal.visible}
+                onClose={() => setStockLimitModal(prev => ({ ...prev, visible: false }))}
+                maxQuantity={stockLimitModal.maxQuantity}
+                currentInCart={stockLimitModal.currentInCart}
+                itemName={stockLimitModal.itemName}
+            />
+
+
         </View>
     );
 }
@@ -973,25 +1067,27 @@ const styles = StyleSheet.create({
         fontWeight: '900',
     },
     processBtn: {
-        height: 48,
-        borderRadius: 24,
+        height: 52,
+        borderRadius: 26,
         justifyContent: 'center',
         alignItems: 'center',
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        elevation: 4,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.25,
+        shadowRadius: 12,
+        elevation: 6,
     },
     processBtnDisabled: {
-        opacity: 0.5,
+        backgroundColor: '#E5E7EB',
+        opacity: 0.9,
         shadowOpacity: 0,
         elevation: 0,
     },
     processBtnText: {
         fontSize: 16,
-        fontWeight: '800',
+        fontWeight: '900',
         color: '#FFFFFF',
+        letterSpacing: 0.3,
     },
     maximizeBtn: {
         position: 'absolute',

@@ -162,16 +162,26 @@ export default function StoresPanel({ onOrderNow, bottomPadding }: StoresPanelPr
                             styles.filledBtn, 
                             { backgroundColor: colors.primary },
                             isSelected && { backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.primary }, 
-                            !inRange && { backgroundColor: colors.surface, opacity: 0.5, borderWidth: 1.2, borderColor: colors.primary }
+                            !inRange && { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB' }
                         ]} 
                         onPress={() => {
+                            if (!inRange) {
+                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                                handleSelectBranch(item);
+                                return;
+                            }
                             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                             handleSelectBranch(item);
                         }}
                     >
                         <View style={styles.statusIndicatorRow}>
-                            <View style={[styles.statusDotSmall, { backgroundColor: inRange ? '#4CAF50' : '#FF5252' }]} />
-                            <Text style={[styles.filledBtnText, { color: colors.background }, isSelected && { color: colors.primary }]}>
+                            <View style={[styles.statusDotSmall, { backgroundColor: inRange ? '#4CAF50' : '#D1D5DB' }]} />
+                            <Text style={[
+                                styles.filledBtnText, 
+                                { color: '#FFFFFF' }, 
+                                isSelected && { color: colors.primary },
+                                !inRange && { color: '#6B7280' }
+                            ]}>
                                 {isSelected ? 'Selected' : (inRange ? 'Order Now' : 'Unavailable')}
                             </Text>
                         </View>

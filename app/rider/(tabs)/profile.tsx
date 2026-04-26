@@ -24,7 +24,7 @@ export default function RiderProfileScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.primary} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.heading }]}>Rider Profile</Text>
-        <View style={{ width: 45 }} /> {/* Spacer */}
+        <View style={{ width: 45 }} />
       </View>
 
       <RiderProfilePanel />

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import { AuthUser } from './auth_api';
 import { useSyncExternalStore } from 'react';
+import { AuthUser } from './auth_api';
 import { getDistanceKm } from './google_location';
 
 type CartItem = {
@@ -38,6 +38,8 @@ export type OrderItem = {
   title: string;
   quantity: number;
   price: string;
+  product_id?: string | number;
+  image?: any;
 };
 
 export type Order = {
@@ -50,12 +52,15 @@ export type Order = {
   deliveryFee: string;
   title: string;
   status: 'In Progress' | 'Delivered' | 'Cancelled';
+  status_label?: string;
   date: string;
   deliveryTime: string;
   paymentMethod: string;
   fullAddress: string;
   itemsList: OrderItem[];
   image: any;
+  _rawDate?: number; // timestamp for ghost order filtering & notifications
+  raw_status?: string; // strict machine status from backend
 };
 
 export type SelectedBranch = {
@@ -85,6 +90,14 @@ type UiState = {
   user: AuthUser | null;
   sessionStatus: 'idle' | 'validating' | 'authorized' | 'expired' | 'unauthorized';
   riderStatus: 'available' | 'busy' | 'offline';
+  readNotificationIds: string[];
+  globalServiceAlert: {
+    visible: boolean;
+    title: string;
+    message: string;
+    type: 'out_of_range' | 'stock_limit' | 'generic';
+    onConfirm?: () => void;
+  } | null;
 };
 
 const initialState: UiState = {
@@ -101,6 +114,8 @@ const initialState: UiState = {
   user: null,
   sessionStatus: 'idle',
   riderStatus: 'offline',
+  readNotificationIds: [],
+  globalServiceAlert: null,
 };
 
 const STORAGE_KEY_FAVORITES = 'maki_favorites';
@@ -109,6 +124,7 @@ const STORAGE_KEY_ADDRESSES = 'maki_addresses';
 const STORAGE_KEY_ACTIVE_ADDRESS_ID = 'maki_active_address_id';
 const STORAGE_KEY_ORDERS = 'maki_orders';
 const STORAGE_KEY_SELECTED_BRANCH = 'maki_selected_branch';
+const STORAGE_KEY_READ_NOTIFS = 'maki_read_notifications';
 const PLUS_CODE_REGEX = /\b[A-Z0-9]{2,8}\+[A-Z0-9]{2,}\b/i;
 const GENERIC_LABEL_REGEX = /\b(current\s*location|unknown|unnamed|pin\s*location)\b/i;
 
@@ -142,22 +158,22 @@ export const setUser = (user: AuthUser | null): void => {
 };
 
 export const hydrateSession = async (): Promise<void> => {
-    const token = await SecureStore.getItemAsync('auth_token');
-    const cachedProfile = await AsyncStorage.getItem('user_profile');
-    
-    if (token) {
-      if (cachedProfile) {
-        setState(prev => ({ 
-          ...prev, 
-          sessionStatus: 'authorized', 
-          user: JSON.parse(cachedProfile) 
-        }));
-      } else {
-        setState((prev) => ({ ...prev, sessionStatus: 'authorized' }));
-      }
+  const token = await SecureStore.getItemAsync('auth_token');
+  const cachedProfile = await AsyncStorage.getItem('user_profile');
+
+  if (token) {
+    if (cachedProfile) {
+      setState(prev => ({
+        ...prev,
+        sessionStatus: 'authorized',
+        user: JSON.parse(cachedProfile)
+      }));
     } else {
-      setState((prev) => ({ ...prev, sessionStatus: 'unauthorized' }));
+      setState((prev) => ({ ...prev, sessionStatus: 'authorized' }));
     }
+  } else {
+    setState((prev) => ({ ...prev, sessionStatus: 'unauthorized' }));
+  }
 };
 
 export const setSessionStatus = (status: UiState['sessionStatus']): void => {
@@ -166,6 +182,25 @@ export const setSessionStatus = (status: UiState['sessionStatus']): void => {
 
 export const setRiderStatus = (status: UiState['riderStatus']): void => {
   setState((prev) => ({ ...prev, riderStatus: status }));
+};
+
+export const showGlobalAlert = (
+  title: string,
+  message: string,
+  type: 'out_of_range' | 'stock_limit' | 'generic' = 'generic',
+  onConfirm?: () => void
+): void => {
+  setState((prev) => ({
+    ...prev,
+    globalServiceAlert: { visible: true, title, message, type, onConfirm }
+  }));
+};
+
+export const dismissGlobalAlert = (): void => {
+  setState((prev) => ({
+    ...prev,
+    globalServiceAlert: prev.globalServiceAlert ? { ...prev.globalServiceAlert, visible: false } : null
+  }));
 };
 
 export const logoutUser = async (): Promise<void> => {
@@ -183,15 +218,19 @@ export const logoutUser = async (): Promise<void> => {
     AsyncStorage.removeItem('current_user_id'),
     AsyncStorage.removeItem('user_profile'),
     AsyncStorage.removeItem('user_role'),
-    AsyncStorage.removeItem(STORAGE_KEY_CART),
-    AsyncStorage.removeItem(STORAGE_KEY_ACTIVE_ADDRESS_ID),
   ]);
 
   // Reset state to initial (except maybe non-auth preferences if any)
   setState((prev) => ({
     ...initialState,
+    cartItems: prev.cartItems, // Persist cart
+    orders: [],                // CLEAR orders on logout for security and fresh re-fetch
+    readNotificationIds: [],   // Clear read notifications
+    addresses: prev.addresses, // Persist addresses
+    activeAddressId: prev.activeAddressId, // Persist active selection
+    selectedBranch: prev.selectedBranch, // Persist branch selection
     sessionStatus: 'unauthorized',
-    riderStatus: 'offline', // Enforce offline upon logout
+    riderStatus: prev.riderStatus, // Remember status across logouts
   }));
 };
 
@@ -232,7 +271,7 @@ export const validateCartAgainstMenu = (menuItems: any[]): { removedCount: numbe
     const isStillAvailable = menuItem && menuItem.is_available && (menuItem.stock ?? 0) > 0;
     return !!isStillAvailable;
   });
-  
+
   const removedCount = currentCart.length - validItems.length;
   if (removedCount > 0) {
     setState(prev => ({ ...prev, cartItems: validItems }));
@@ -245,7 +284,7 @@ export const validateCartAgainstMenu = (menuItems: any[]): { removedCount: numbe
 // Initialize store from storage
 const initFromStorage = async () => {
   try {
-    const [userId, favorites, cart, addresses, activeAddressId, orders, selectedBranch] = await Promise.all([
+    const [userId, favorites, cart, addresses, activeAddressId, orders, selectedBranch, readNotifs] = await Promise.all([
       AsyncStorage.getItem('current_user_id'),
       AsyncStorage.getItem(STORAGE_KEY_FAVORITES),
       AsyncStorage.getItem(STORAGE_KEY_CART),
@@ -253,6 +292,7 @@ const initFromStorage = async () => {
       AsyncStorage.getItem(STORAGE_KEY_ACTIVE_ADDRESS_ID),
       AsyncStorage.getItem(STORAGE_KEY_ORDERS),
       AsyncStorage.getItem(STORAGE_KEY_SELECTED_BRANCH),
+      AsyncStorage.getItem(STORAGE_KEY_READ_NOTIFS),
     ]);
 
     let loadedAddresses = addresses ? JSON.parse(addresses) : [];
@@ -300,6 +340,7 @@ const initFromStorage = async () => {
       activeAddressId: loadedActiveId,
       orders: orders ? JSON.parse(orders) : [],
       selectedBranch: selectedBranch ? JSON.parse(selectedBranch) : null,
+      readNotificationIds: readNotifs ? JSON.parse(readNotifs) : [],
     }));
   } catch (e) {
     console.error('Failed to load store from storage:', e);
@@ -366,11 +407,11 @@ const isInvalidLabel = (label: string): boolean => {
 const getAddressLabel = (address: Address): string =>
   stripPlusCode(
     address.fullAddress ||
-      address.subdivision ||
-      address.street ||
-      address.barangay ||
-      address.city ||
-      ''
+    address.subdivision ||
+    address.street ||
+    address.barangay ||
+    address.city ||
+    ''
   );
 
 const hasLandmarkFallback = (address: Address): boolean => {
@@ -608,10 +649,10 @@ export const addAddress = (address: Omit<Address, 'id'>): void => {
     const newAddresses = [...prev.addresses, newAddress];
     // Set as active if it's the first or just auto-set it regardless for better UX
     const newActiveId = newAddress.id;
-    
+
     syncToStorage(STORAGE_KEY_ACTIVE_ADDRESS_ID, newActiveId);
     syncToStorage(STORAGE_KEY_ADDRESSES, newAddresses);
-    
+
     console.log('[UiStore] New address count:', newAddresses.length);
     return { ...prev, addresses: newAddresses, activeAddressId: newActiveId };
   });
@@ -757,8 +798,8 @@ export const upsertAutoDetectedAddress = (
     const hasExisting = prev.addresses.some((address) => address.id === AUTO_DETECTED_ADDRESS_ID);
     const nextAddresses = hasExisting
       ? prev.addresses.map((address) =>
-          address.id === AUTO_DETECTED_ADDRESS_ID ? normalizedAddress : address
-        )
+        address.id === AUTO_DETECTED_ADDRESS_ID ? normalizedAddress : address
+      )
       : [normalizedAddress, ...prev.addresses];
 
     syncToStorage(STORAGE_KEY_ADDRESSES, nextAddresses);
@@ -776,18 +817,18 @@ export const setAddressFromPlace = async (place: any): Promise<string | null> =>
   const lat = place.geometry.location.lat;
   const lng = place.geometry.location.lng;
   const fullAddress = place.formatted_address;
-  
+
   // Extract components
   const components = place.address_components || [];
   const getComp = (types: string[]) => components.find((c: any) => types.some(t => c.types.includes(t)))?.long_name || '';
-  
+
   const street = getComp(['route', 'street_number']) || getComp(['establishment', 'point_of_interest']) || 'Selected Location';
   const barangay = getComp(['sublocality_level_1', 'sublocality', 'neighborhood']);
   const city = getComp(['locality', 'postal_town', 'administrative_area_level_3']);
   const province = getComp(['administrative_area_level_2', 'administrative_area_level_1']);
-  
+
   const id = `place-${place.place_id}`;
-  
+
   const newAddress: Address = {
     id,
     fullAddress,
@@ -799,19 +840,19 @@ export const setAddressFromPlace = async (place: any): Promise<string | null> =>
     latitude: lat,
     longitude: lng,
   };
-  
+
   setState((prev) => {
     const hasExisting = prev.addresses.some(a => a.id === id);
-    const nextAddresses = hasExisting 
+    const nextAddresses = hasExisting
       ? prev.addresses.map(a => a.id === id ? newAddress : a)
       : [newAddress, ...prev.addresses];
-      
+
     syncToStorage(STORAGE_KEY_ADDRESSES, nextAddresses);
     syncToStorage(STORAGE_KEY_ACTIVE_ADDRESS_ID, id);
-    
+
     return { ...prev, addresses: nextAddresses, activeAddressId: id };
   });
-  
+
   return id;
 };
 
@@ -828,9 +869,16 @@ export const removeAddress = (id: string): void => {
   });
 };
 
-export const addOrder = (order: Order): void => {
+export const addOrder = (order: Order) => {
   setState((prev) => {
-    const newOrders = [order, ...prev.orders]; // New orders on top
+    const existingIndex = prev.orders.findIndex((o) => o.id === order.id || o.orderId === order.orderId || (o.backendOrderId && order.backendOrderId && o.backendOrderId === order.backendOrderId));
+    let newOrders;
+    if (existingIndex > -1) {
+      newOrders = [...prev.orders];
+      newOrders[existingIndex] = { ...newOrders[existingIndex], ...order };
+    } else {
+      newOrders = [order, ...prev.orders];
+    }
     syncToStorage(STORAGE_KEY_ORDERS, newOrders);
     return { ...prev, orders: newOrders };
   });
@@ -851,10 +899,57 @@ export const updateOrderStatus = (orderId: string, status: Order['status']): voi
   });
 };
 
-export const setOrders = (orders: Order[]): void => {
+export const markAsRead = (id: string): void => {
   setState((prev) => {
-    syncToStorage(STORAGE_KEY_ORDERS, orders);
-    return { ...prev, orders };
+    if (prev.readNotificationIds.includes(id)) return prev;
+    const next = [...prev.readNotificationIds, id];
+    syncToStorage(STORAGE_KEY_READ_NOTIFS, next);
+    return { ...prev, readNotificationIds: next };
+  });
+};
+
+export const setOrders = (newOrders: Order[]): void => {
+  setState((prev) => {
+    // Smart merge: Preserve high-quality local details if the new input is summarized
+    const merged = newOrders.map(no => {
+      const existing = prev.orders.find(o => 
+        o.id === no.id || 
+        o.orderId === no.orderId || 
+        (o.backendOrderId && no.backendOrderId && o.backendOrderId === no.backendOrderId)
+      );
+      if (!existing) return no;
+      
+      // If new order lacks items but existing has them, keep existing items
+      const hasNoItems = !no.itemsList || no.itemsList.length === 0;
+      const hasExistingItems = existing.itemsList && existing.itemsList.length > 0;
+      
+      return {
+        ...existing,
+        // Only update status-related fields from the new summary
+        status: no.status || existing.status,
+        status_label: no.status_label || no.status || existing.status_label,
+        raw_status: no.raw_status || no.status || existing.raw_status,
+        _rawDate: no._rawDate || existing._rawDate,
+        
+        // Explicitly protect high-quality data
+        itemsList: (hasNoItems && hasExistingItems) ? existing.itemsList : (no.itemsList || existing.itemsList || []),
+        totalPrice: (no.totalPrice && no.totalPrice !== '₱0.00') ? no.totalPrice : existing.totalPrice,
+        subtotal: (no.subtotal && no.subtotal !== '₱0.00') ? no.subtotal : existing.subtotal,
+        deliveryFee: (no.deliveryFee && no.deliveryFee !== '₱0.00') ? no.deliveryFee : existing.deliveryFee,
+        items: (no.items && no.items > 0) ? no.items : existing.items,
+        paymentMethod: no.paymentMethod || existing.paymentMethod,
+        fullAddress: no.fullAddress || existing.fullAddress,
+        image: no.image || existing.image
+      };
+    });
+
+    // Add any existing orders that weren't in the new list (pagination/ghost prevention)
+    const existingIds = new Set(merged.map(m => m.id));
+    const persistent = prev.orders.filter(o => !existingIds.has(o.id));
+    const finalOrders = [...merged, ...persistent].sort((a, b) => (b._rawDate || 0) - (a._rawDate || 0));
+
+    syncToStorage(STORAGE_KEY_ORDERS, finalOrders);
+    return { ...prev, orders: finalOrders };
   });
 };
 

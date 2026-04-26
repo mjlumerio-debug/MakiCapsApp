@@ -47,20 +47,26 @@ type VerifyEmailCodeResponse = {
   firstName?: string | null;
 };
 
-const mapAuthUser = (user: any, emailFallback = ''): AuthUser => ({
-  id: user?.id || 0,
-  firstName: user?.first_name || '',
-  lastName: user?.last_name || '',
-  name: user?.name || '',
-  email: user?.email || emailFallback,
-  contactNumber: user?.role === 'rider' ? (user?.phone || '') : (user?.mobile_number || ''),
-  role: user?.role || 'customer',
-  branchId: user?.branch_id || user?.branchId || null,
-  branchName: user?.branch?.name || user?.branchName || user?.branch_name || null,
-  riderId: user?.role === 'rider' ? user?.id : null,
-  avatarId: user?.avatar_id || user?.avatarId || 1, 
-  profilePictureUrl: user?.role === 'rider' ? null : (user?.profile_photo_path || null),
-});
+const mapAuthUser = (user: any, emailFallback = ''): AuthUser => {
+  const firstName = user?.first_name || user?.firstName || '';
+  const lastName = user?.last_name || user?.lastName || '';
+  const fullName = user?.name || user?.fullname || user?.Fullname || (firstName && lastName ? `${firstName} ${lastName}` : '');
+
+  return {
+    id: user?.id || 0,
+    firstName: firstName || fullName.split(' ')[0] || '',
+    lastName: lastName || fullName.split(' ').slice(1).join(' ') || '',
+    name: fullName,
+    email: user?.email || user?.Email || emailFallback,
+    contactNumber: user?.mobile_number || user?.mobileNumber || user?.phone || user?.contact_number || user?.['Mobile Number'] || '',
+    role: user?.role || 'customer',
+    branchId: user?.branch_id || user?.branchId || null,
+    branchName: user?.branch?.name || user?.branchName || user?.branch_name || null,
+    riderId: user?.role === 'rider' ? user?.id : null,
+    avatarId: user?.avatar_id || user?.avatarId || 1,
+    profilePictureUrl: user?.role === 'rider' ? null : (user?.profile_photo_path || null),
+  };
+};
 
 export const fetchCurrentUser = async (): Promise<AuthUser> => {
   try {
@@ -243,10 +249,8 @@ export const mobileLogin = async (payload: LoginPayload): Promise<AuthUser> => {
     await AsyncStorage.setItem('user_role', mappedUser.role || 'customer');
 
     if (mappedUser.role === 'rider') {
-      // Automatically set status to available on login
-      // Import updateRiderStatus dynamically to avoid circular dependencies if any
-      const { updateRiderStatus } = await import('./rider_api');
-      await updateRiderStatus('available');
+      // The rider's status should be determined by the backend or explicitly set by the rider via the Go Online Modal.
+      // We no longer forcefully set them to 'available' on login.
     }
 
     return mappedUser;

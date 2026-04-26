@@ -90,23 +90,24 @@ export const resolveProductImage = (path: string | null): string | null => {
 
 export const refreshMenuStore = async (
   mode: 'branch' | 'global' = 'global',
-  branchId?: number | null
+  branchId?: number | null,
+  categoryId?: string | number
 ): Promise<boolean> => {
-  setState(prev => ({ ...prev, isRefreshing: true }));
+  setState(prev => ({ ...prev, isRefreshing: true, menuItems: [] }));
   
   try {
     let result: { products: DisplayProduct[], categories: any[] };
     let finalMode = mode;
     
     if (mode === 'branch' && branchId) {
-      result = await fetchBranchProducts(branchId);
-      if (result.products.length === 0) {
+      result = await fetchBranchProducts(branchId, categoryId);
+      if (result.products.length === 0 && !categoryId) {
         const globalData = await fetchGlobalCatalog();
         result = { products: globalData.displayProducts, categories: globalData.categories };
         finalMode = 'global';
       }
     } else {
-      const { displayProducts, categories } = await fetchGlobalCatalog();
+      const { displayProducts, categories } = await fetchGlobalCatalog(categoryId);
       result = { products: displayProducts, categories };
     }
 
